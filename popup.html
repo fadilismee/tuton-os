@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 300px; padding: 16px 14px 12px;
+    background: #090b0d; color: #e9edf0;
+    font-family: -apple-system, 'Segoe UI', sans-serif;
+    font-size: 13px;
+  }
+  .brand { display: flex; gap: 10px; align-items: center; }
+  .brand svg { width: 30px; height: 30px; display: block; flex: 0 0 auto; }
+  .brand h2 { font-size: 13px; font-weight: 800; letter-spacing: 2.5px; white-space: nowrap; }
+  .brand .sub { font-size: 9px; color: #5b636b; font-weight: 700; letter-spacing: 2px; }
+  .dot { width: 7px; height: 7px; border-radius: 99px; background: #5b636b; }
+  .dot.on { background: #00e68a; }
+  .dot.off { background: #ff6b6b; }
+  .stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 7px; margin: 12px 0 8px; }
+  .stat {
+    background: #0e1114; border: 1px solid rgba(255,255,255,.07);
+    border-radius: 9px; padding: 8px 6px; text-align: center;
+  }
+  .stat .k { display: block; font-size: 9px; font-weight: 700; letter-spacing: 1.4px; color: #5b636b; text-transform: uppercase; }
+  .stat .n { display: block; font-size: 17px; font-weight: 750; letter-spacing: -.3px; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .stat .n.acc { color: #00e68a; }
+  #status { font-size: 11.5px; color: #8d959d; margin: 2px 1px 4px; }
+  #status b { color: #e9edf0; }
+  button {
+    width: 100%; padding: 10px; border-radius: 9px;
+    cursor: pointer; font-weight: 700; font-size: 12.5px; margin-top: 7px;
+    border: 1px solid rgba(255,255,255,.13); background: transparent; color: #e9edf0;
+    font-family: inherit; display: flex; align-items: center; justify-content: center;
+  }
+  button svg { margin-right: 7px; }
+  button:hover { border-color: #00e68a; color: #00e68a; }
+  button:disabled { opacity: .45; cursor: default; }
+  #open-side { background: #00e68a; border-color: #00e68a; color: #04120a; }
+  #open-side:hover { background: #2bf09d; color: #04120a; }
+  #checkin { border-color: transparent; color: #8d959d; }
+  #checkin:hover { color: #e9edf0; border-color: rgba(255,255,255,.13); }
+  #router { font-size: 10px; color: #5b636b; margin-top: 9px; text-align: center; letter-spacing: .3px; }
+</style>
+</head>
+<body>
+  <div class="brand">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="1.5" y="1.5" width="29" height="29" rx="8" fill="#E8ECEE"/><path d="M10 11.5h12M16 11.5v9" stroke="#090B0D" stroke-width="2.6" stroke-linecap="round"/></svg>
+    <div><h2>TUTON OS</h2><div class="sub">LOCAL-FIRST</div></div>
+  </div>
+  <div class="stats">
+    <div class="stat"><span class="k">IPK</span><span class="n acc" id="st-ipk">–</span></div>
+    <div class="stat"><span class="k">Streak</span><span class="n" id="st-streak">–</span></div>
+    <div class="stat"><span class="k">Level</span><span class="n" id="st-level">–</span></div>
+  </div>
+  <div id="status">…</div>
+  <button id="open-side"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="17" height="16" rx="2"/><path d="M9.5 4v16"/></svg>Buka Sidebar</button>
+  <button id="open-float"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4.5h5.5V10M19.5 4.5L11 13M18 13.5V19a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5.5"/></svg>Popup Ngambang</button>
+  <button id="checkin"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12.5l5 5L19.5 7"/></svg><span id="checkin-txt">Check-in harian</span></button>
+  <div id="router">…</div>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

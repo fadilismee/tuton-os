@@ -1,0 +1,20 @@
+[package]
+name = "tuton-jarvis-desktop"
+version = "0.1.0"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# V1 berikutnya (JANGAN aktifkan sebelum shell hello-world compile):
+# xcap = "0.1"            # screenshot level OS (lolos anti-scrape browser)
+# tauri-plugin-global-shortcut = "2"  # hotkey Ctrl+Shift+J
+# TODO TTS PALING AKHIR: Windows OneCore via powershell System.Speech (tanpa crate)
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

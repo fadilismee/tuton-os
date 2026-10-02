@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tuton OS</title>
+<link rel="stylesheet" href="./styles.css">
+<link rel="stylesheet" href="../src/bmp/vendor/katex/katex.min.css">
+</head>
+<body>
+<div class="app" id="app">
+  <aside class="side">
+    <div class="side-head">
+      <div class="brand">
+        <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="1.5" y="1.5" width="29" height="29" rx="8" fill="#E8ECEE"/><path d="M10 11.5h12M16 11.5v9" stroke="#090B0D" stroke-width="2.6" stroke-linecap="round"/></svg>
+        <h1>TUTON OS<small>LOCAL-FIRST</small></h1>
+      </div>
+    </div>
+    <nav class="nav" id="nav-side" aria-label="Navigasi utama"></nav>
+    <div class="tiny" style="padding:12px 16px;border-top:1px solid var(--line)">LOCAL · DATA DI PERANGKAT</div>
+  </aside>
+  <div class="main" style="flex:1;display:flex;flex-direction:column;min-width:0;min-height:0">
+    <header class="topbar">
+      <div class="brand">
+        <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="1.5" y="1.5" width="29" height="29" rx="8" fill="#E8ECEE"/><path d="M10 11.5h12M16 11.5v9" stroke="#090B0D" stroke-width="2.6" stroke-linecap="round"/></svg>
+        <h1>TUTON OS<small>LOCAL-FIRST</small></h1>
+      </div>
+      <div class="spacer"></div>
+      <button class="btn ghost sm" id="btn-float" title="Buka sebagai jendela lebar"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4.5h5.5V10M19.5 4.5L11 13M18 13.5V19a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5.5"/></svg>Ngambang</button>
+    </header>
+    <nav class="nav" id="nav-top" aria-label="Navigasi utama"></nav>
+    <div class="toolbar">
+      <h2 id="page-title">Dashboard</h2>
+      <div class="user-pill" id="user-status">…</div>
+    </div>
+    <main class="content" id="content"></main>
+  </div>
+</div>
+<div class="notif" id="notif" role="status"><span id="notif-msg"></span></div>
+<script src="../src/bmp/vendor/pdf-lib.min.js"></script>
+<script src="../src/bmp/vendor/tesseract.min.js"></script>
+<script src="../src/bmp/vendor/katex/katex.min.js"></script>
+<script src="../src/bmp/vendor/pdfjs-umd/pdf.min.js"></script>
+<script src="../src/export/vendor/mathml2omml.min.js"></script>
+<script src="./boot.js"></script>
+<script type="module" src="./app.js"></script>
+</body>
+</html>

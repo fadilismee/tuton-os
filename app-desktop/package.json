@@ -1,0 +1,1 @@
+{"name": "tuton-jarvis-desktop", "version": "0.1.0", "private": true, "description": "JARVIS desktop V1 (Tauri 2, Windows-only) — floating assistant. TTS paling akhir.", "scripts": {"dev": "tauri dev", "build": "tauri build"}, "devDependencies": {"@tauri-apps/cli": "^2.0.0"}}

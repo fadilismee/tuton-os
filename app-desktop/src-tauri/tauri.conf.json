@@ -1,0 +1,1 @@
+{"productName": "Tuton Jarvis", "version": "0.1.0", "identifier": "id.tuton.jarvis", "build": {"frontendDist": "../src", "devUrl": "http://localhost:1420", "beforeDevCommand": "", "beforeBuildCommand": ""}, "app": {"windows": [{"title": "Tuton Jarvis", "width": 420, "height": 640, "resizable": true, "alwaysOnTop": true}]}, "bundle": {"active": true, "targets": "all", "icon": []}}
