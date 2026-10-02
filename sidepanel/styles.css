@@ -263,6 +263,52 @@ body.qfocus .qexam-q .q-title { font-size: 15.5px; }
 .creator-qr { width: min(240px, 64vw); height: auto; border-radius: 12px; border: 1px solid var(--line2); background: #fff; margin: 10px auto 6px; display: block; }
 .creator-xbig { position: absolute; top: 8px; right: 8px; width: 32px; height: 32px; border-radius: 10px; border: 1px solid var(--line2); background: var(--bg2); color: var(--txt); cursor: pointer; font-size: 15px; line-height: 1; }
 .creator-xbig:hover { color: #ff7b7b; border-color: rgba(255,123,123,.6); }
+/* ---------- AI chat clean: header + composer + tools + riwayat ---------- */
+.ai-card { padding-bottom: 10px; }
+.ai-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ai-head-right { display: inline-flex; align-items: center; gap: 6px; }
+.composer { display: flex; gap: 6px; margin-top: 10px; align-items: flex-end; }
+.composer textarea { flex: 1; resize: none; min-height: 44px; max-height: 140px; }
+.ai-tools { flex-wrap: wrap; row-gap: 6px; }
+#ai-hist-panel { border: 1px solid var(--line2); border-radius: 10px; padding: 10px; margin-top: 8px; background: var(--bg1); max-height: 220px; overflow-y: auto; }
+.hist-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 4px; border-bottom: 1px solid var(--line); font-size: 12px; cursor: pointer; }
+.hist-row:last-child { border-bottom: none; }
+.hist-row span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hist-row.cur span { color: var(--acc); font-weight: 700; }
+.hist-row button { border: 1px solid var(--line); background: transparent; color: var(--mut); border-radius: 6px; width: 22px; height: 22px; cursor: pointer; font-size: 11px; }
+.hist-row button:hover { color: #ff7b7b; border-color: rgba(255,123,123,.5); }
+/* ---------- Theme PUTIH: putih + aksen hijau ---------- */
+body.light {
+  --bg0: #ffffff;
+  --bg1: #f4f7f5;
+  --bg2: #eaf1ec;
+  --bg3: #dfe9e2;
+  --line: rgba(20, 60, 40, .12);
+  --line2: rgba(20, 60, 40, .22);
+  --txt: #14261c;
+  --mut: #4c6a5c;
+  --dim: #7d968b;
+  --acc: #00a35c;
+  --acc-ink: #ffffff;
+  --acc-soft: rgba(0, 163, 92, .1);
+  --red: #d33;
+}
+body.light .msg.user { background: var(--bg2); }
+body.light .codeblock { background: #f7faf8; }
+body.light .codeblock .cb-head { background: var(--bg2); }
+body.light .katex-display { background: rgba(0,163,92,.06); }
+body.light .hero-ipk em { text-shadow: none; }
+body.light .creator-popup { box-shadow: 0 20px 60px rgba(20,60,40,.25); }
+body.light .creator-qr { border-color: var(--line2); }
+/* ---------- Footer legal + credit ---------- */
+.app-foot { margin: 18px 2px 8px; padding-top: 10px; border-top: 1px solid var(--line); text-align: center; }
+.foot-links { display: flex; flex-wrap: wrap; gap: 4px; justify-content: center; margin-bottom: 6px; }
+.foot-links button { background: transparent; border: none; color: var(--dim); font-size: 11px; cursor: pointer; padding: 3px 7px; border-radius: 6px; font-family: var(--font); }
+.foot-links button:hover { color: var(--acc); background: var(--acc-soft); }
+.foot-links button.on { color: var(--acc); }
+.legal-body { white-space: pre-wrap; text-align: left; font-size: 12.5px; line-height: 1.65; max-height: 50vh; overflow-y: auto; background: var(--bg2); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-top: 8px; }
+.creator-popup.legal { text-align: left; }
+.creator-popup.legal h3, .creator-popup.legal .eyebrow { text-align: center; }
 /* ---------- Heatmap (GitHub-style) ---------- */
 .cal-wrap { overflow-x: auto; padding: 4px 0 2px; }
 .cal { display: flex; gap: 3px; }

@@ -101,7 +101,23 @@ function currentRoute() {
   return m ? m[1] : 'dashboard';
 }
 
+// ---------- Theme: gelap (default) / putih (aksen hijau-putih) ----------
+async function applyTheme() {
+  try {
+    const p = (await load('tuton_profile', {})) || {};
+    document.body.classList.toggle('light', (p.theme || 'dark') === 'light');
+  } catch { /* abaikan */ }
+}
+
 window.addEventListener('hashchange', render);
+// Deep-link dari popup klik-pertama (TUTON_GOTO): arahkan sidepanel ke halaman.
+try {
+  chrome.runtime?.onMessage?.addListener((msg) => {
+    if (msg?.type === 'TUTON_GOTO' && msg.hash) {
+      location.hash = msg.hash;
+    }
+  });
+} catch { /* abaikan di luar extension */ }
 window.addEventListener('resize', () => {
   const shouldFloat = new URLSearchParams(location.hash.split('?')[1] || '').get('mode') === 'float';
   if (shouldFloat && !isFloat) { isFloat = true; document.getElementById('app').classList.add('float'); }
@@ -232,8 +248,49 @@ function yearBounds() {
 
 const TITLES = { dashboard: 'Dashboard', ipk: 'IPK Calculator', simulasi: 'Simulasi What-If', tracker: 'Tracker & Fokus', soal: 'Bank Soal', bmp: 'BMP Studio', pdf: 'PDF Tools', export: 'Jadikan File (DOCX/PDF)', ai: 'AI Agen', cap: 'Capture & Rekam', setting: 'Setting', tugas: 'Tugas Kuliah', catatan: 'Catatan' };
 
+const LEGAL_DOCS = {
+  keamanan: { title: 'Keamanan', body: `Tuton OS berjalan lokal-first.\n\n- API key milikmu disimpan di chrome.storage.local perangkat ini (atau key.local.js yang tidak di-commit). Tidak dikirim ke mana pun kecuali ke provider AI yang kamu pilih di Setting.\n- Token runtime hanya dipakai ke URL runtime milikmu (laptop/VPS).\n- Tidak ada telemetri, pelacakan, atau server wajib. Semua fitur inti jalan tanpa internet kecuali chat AI dan search.` },
+  privasi: { title: 'Privasi', body: `Data akademik (nilai, tracker, soal, chat, persona) tersimpan di perangkatmu.\n\n- Tidak ada akun, tidak ada analitik, tidak ada iklan pihak ketiga.\n- File yang kamu lampirkan dibaca di memori tab dan hanya teks hasil ekstrak yang dikirim ke AI.\n- Export JSON ada di Setting > Data. Hapus semua = chrome.storage.local.clear().` },
+  hakcipta: { title: 'Hak cipta', body: `Tuton OS adalah karya opensource. Kode pihak ketiga tetap milik pemiliknya (lihat THIRD_PARTY.md: Mozilla pdf.js, Tesseract, pdf-lib, KaTeX, pola BMP Terbuka GPL-3.0).\n\n- Materi modul UT milik Universitas Terbuka — gunakan untuk belajar pribadi.\n- Jangan mengunggah ulang materi berhak cipta ke layanan publik tanpa izin.` },
+  syarat: { title: 'Syarat penggunaan', body: `Dengan memakai Tuton OS kamu setuju:\n\n1. Bertanggung jawab atas API key dan token milikmu.\n2. Tidak memakai extension untuk kecurangan akademik yang melanggar aturan kampus.\n3. Memahami jawaban AI bisa salah — selalu verifikasi ke modul resmi.\n4. Developer tidak bertanggung jawab atas nilai atau keputusan akademikmu.` },
+  grup: { title: 'Grup sharing', body: `Belajar bareng lebih cepat.\n\n- Grup Telegram/Discord resmi: (segera diumumkan di zerotime.web.id).\n- Bagikan template soal, paket bank soal, dan tips — jangan bagikan API key.\n- Butuh bantuan? Tulis di grup dengan format: [MK] + screenshot error + langkah yang sudah dicoba.` },
+  bagikan: { title: 'Bagikan Tuton OS', body: `Bantu temanmu pakai juga:\n\n- Fork / star repo GitHub dan kirim pull request.\n- Salin link repo ini ke teman sekelas.\n- Semua fitur inti gratis dan opensource — tidak ada paywall.` },
+  donasi: { title: 'Donasi', body: `Tuton OS gratis. Kalau terbantu, traktir kopi biar update terus.\n\n- Scan QRIS di popup Dukung Creator (muncul berkala, bisa ditutup kapan saja).\n- QRIS a.n. fadilismee.\n- Dibuat oleh zerotime.web.id.` },
+};
+
+function legalModal(key) {
+  document.getElementById('legal-modal')?.remove();
+  const d = LEGAL_DOCS[key];
+  if (!d) return;
+  const m = document.createElement('div');
+  m.id = 'legal-modal';
+  m.setAttribute('role', 'dialog');
+  m.setAttribute('aria-label', d.title);
+  m.innerHTML = `<div class="creator-backdrop"></div>
+  <div class="creator-popup legal"><button class="creator-xbig" title="Tutup (Esc)">X</button>
+    <div class="eyebrow">TUTON OS</div><h3>${escapeHtml(d.title)}</h3>
+    <div class="legal-body">${escapeHtml(d.body)}</div>
+    <div class="tiny dim" style="margin-top:8px">dibuat oleh zerotime.web.id</div>
+  </div>`;
+  document.body.appendChild(m);
+  const close = () => m.remove();
+  m.querySelector('.creator-xbig').addEventListener('click', close);
+  m.querySelector('.creator-backdrop').addEventListener('click', close);
+  const onKey = (e) => { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); } };
+  document.addEventListener('keydown', onKey);
+}
+
+function appFooter(active) {
+  return `<footer class="app-foot"><div class="foot-links">${['keamanan', 'privasi', 'hakcipta', 'syarat', 'grup', 'bagikan', 'donasi'].map((k) => `<button data-legal="${k}"${k === active ? ' class="on"' : ''}>${LEGAL_DOCS[k].title}</button>`).join('')}</div><div class="tiny dim">dibuat oleh zerotime.web.id · lokal-first, tanpa tracker</div></footer>`;
+}
+
+function bindFooter(scope) {
+  scope.querySelectorAll('[data-legal]').forEach((b) => b.addEventListener('click', () => legalModal(b.dataset.legal)));
+}
+
 // ---------- Render ----------
 async function render() {
+  await applyTheme();
   const page = currentRoute();
   // Halaman overlay tidak mengubah hash — render dashboard + panel overlay.
   if (overlayPage) {
@@ -382,6 +439,8 @@ async function vDashboard() {
     <div id="creator-slot"></div>`;
   content.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => go(b.dataset.go)));
   content.querySelectorAll('[data-ov]').forEach((b) => b.addEventListener('click', () => openOverlay(b.dataset.ov, 'dashboard')));
+  content.insertAdjacentHTML('beforeend', appFooter());
+  bindFooter(content);
   const setYear = async (y) => {
     const p = await load('tuton_profile', {});
     await save('tuton_profile', { ...p, calYear: y });
@@ -412,26 +471,63 @@ async function vDashboard() {
   paintCreator($('#creator-slot'));
 }
 
-// ---------- Dukung creator: POPUP QRIS full, gampang di-close ----------
-// Prinsip: lokal-first, tanpa tracker. QR = assets/qris.png (di-crop dari
-// qr.png kamu, cuma matriks QR-nya aja, 512px). Popup muncul 1×/hari di
-// dashboard. Tutup super gampang: tombol ✕ besar, klik luar popup, atau
-// tombol Esc — semuanya langsung hilang. Pilihan "Besok lagi" / "Matikan
-// total" tersimpan di tuton_profile.creatorAds. credit: zerotime.web.id
-async function paintCreator(slot) {
-  if (slot) slot.innerHTML = ''; // slot banner lama tidak dipakai lagi
+// ---------- Dukung creator: POPUP QRIS full, multi-trigger + anti-spam ----------
+// QR = assets/qris.png (crop matriks QR dari qr.png, 512px). Tanpa tracker/fetch.
+// Trigger: (1) buka dashboard 1x/hari, (2) tiap 25 mnt pemakaian, (3) tiap 8 chat
+// terkirim, (4) tiap export file sukses. Anti-spam: max 1 popup / 10 menit dan
+// max 4x / hari, kecuali trigger manual dari footer. Tutup: tombol X besar,
+// klik backdrop, Esc — tanpa emoji. Pref di tuton_profile.creatorAds:
+// { off, hideUntil, day, dayCount, lastShown }. credit: zerotime.web.id
+async function creatorPref() {
   try {
-    const pref = await creatorPref();
-    if (pref.off || Date.now() < (pref.hideUntil || 0)) return;
-    if (document.getElementById('creator-modal')) return; // jangan dobel
+    const p = (await load('tuton_profile', {})) || {};
+    return p.creatorAds || { off: false, hideUntil: 0, day: '', dayCount: 0, lastShown: 0 };
+  } catch { return { off: false, hideUntil: 0, day: '', dayCount: 0, lastShown: 0 }; }
+}
+
+async function setCreatorPref(patch) {
+  try {
+    const p = (await load('tuton_profile', {})) || {};
+    await save('tuton_profile', { ...p, creatorAds: { off: false, hideUntil: 0, day: '', dayCount: 0, lastShown: 0, ...(p.creatorAds || {}), ...patch } });
+  } catch { /* abaikan */ }
+}
+
+function creatorDay() { return new Date().toISOString().slice(0, 10); }
+
+// Cek anti-spam. force=true (klik footer) selalu boleh.
+async function creatorAllowed(force) {
+  const pref = await creatorPref();
+  if (pref.off) return { ok: false, why: 'off' };
+  if (force) return { ok: true, pref };
+  if (document.getElementById('creator-modal')) return { ok: false, why: 'open' };
+  if (Date.now() < (pref.hideUntil || 0)) return { ok: false, why: 'snooze' };
+  if (Date.now() - (pref.lastShown || 0) < 10 * 60e3) return { ok: false, why: 'cooldown' };
+  const day = creatorDay();
+  const dayCount = pref.day === day ? (pref.dayCount || 0) : 0;
+  if (dayCount >= 4) return { ok: false, why: 'daily-cap' };
+  return { ok: true, pref };
+}
+
+async function creatorMarkShown() {
+  const day = creatorDay();
+  const pref = await creatorPref();
+  const dayCount = pref.day === day ? (pref.dayCount || 0) + 1 : 1;
+  await setCreatorPref({ lastShown: Date.now(), day, dayCount });
+}
+
+async function showCreatorModal(reason) {
+  const gate = await creatorAllowed(reason === 'manual');
+  if (!gate.ok) return false;
+  try {
+    if (document.getElementById('creator-modal')) return false;
     const m = document.createElement('div');
     m.id = 'creator-modal';
     m.setAttribute('role', 'dialog');
     m.setAttribute('aria-label', 'Dukung creator');
     m.innerHTML = `<div class="creator-backdrop"></div>
     <div class="creator-popup">
-      <button class="creator-xbig" title="Tutup (Esc)">✕</button>
-      <div class="eyebrow">DUKUNG CREATOR ☕</div>
+      <button class="creator-xbig" title="Tutup (Esc)">X</button>
+      <div class="eyebrow">DUKUNG CREATOR</div>
       <h3>Dukung Tuton OS</h3>
       <p class="tiny">Scan QRIS ini dari e-wallet / m-banking apa pun buat traktir kopi — biar update terus.</p>
       <img class="creator-qr" src="../assets/qris.png" alt="QRIS dukung creator">
@@ -442,13 +538,14 @@ async function paintCreator(slot) {
       </div>
     </div>`;
     document.body.appendChild(m);
+    await creatorMarkShown();
     const close = async (snooze) => {
       if (snooze) await setCreatorPref({ hideUntil: Date.now() + 864e5 });
       m.remove();
     };
-    m.querySelector('.creator-xbig').addEventListener('click', () => { close(true); notify('Siap, ditutup 🙏'); });
+    m.querySelector('.creator-xbig').addEventListener('click', () => { close(true); notify('Siap, ditutup'); });
     m.querySelector('.creator-backdrop').addEventListener('click', () => close(true));
-    m.querySelector('[data-snooze]').addEventListener('click', async () => { await close(true); notify('Oke, besok lagi ya 🙏'); });
+    m.querySelector('[data-snooze]').addEventListener('click', async () => { await close(true); notify('Oke, besok lagi ya'); });
     m.querySelector('[data-off]').addEventListener('click', async () => {
       if (!confirm('Matikan popup dukung creator selamanya? (bisa dinyalakan lagi di Setting)')) return;
       await setCreatorPref({ off: true });
@@ -458,20 +555,28 @@ async function paintCreator(slot) {
       if (e.key === 'Escape') { close(true); document.removeEventListener('keydown', onKey); }
     };
     document.addEventListener('keydown', onKey);
-  } catch { /* popup best-effort, jangan rusak dashboard */ }
+    return true;
+  } catch { return false; }
 }
 
-async function creatorPref() {
-  try {
-    const p = (await load('tuton_profile', {})) || {};
-    return p.creatorAds || { off: false, hideUntil: 0 };
-  } catch { return { off: false, hideUntil: 0 }; }
-}
+// Kompatibilitas: pemanggil lama paintCreator(slot) -> trigger 'open'.
+async function paintCreator() { await showCreatorModal('open'); }
 
-async function setCreatorPref(patch) {
+// Sinyal pemakaian untuk trigger waktu/chat/export (best-effort, tanpa spam).
+async function creatorSignal(kind) {
   try {
-    const p = (await load('tuton_profile', {})) || {};
-    await save('tuton_profile', { ...p, creatorAds: { off: false, hideUntil: 0, ...(p.creatorAds || {}), ...patch } });
+    if (kind === 'chat') {
+      const c = (globalThis.__creatorChats = (globalThis.__creatorChats || 0) + 1);
+      if (c % 8 === 0) await showCreatorModal('chat');
+    } else if (kind === 'export') {
+      await showCreatorModal('export');
+    } else if (kind === 'tick') {
+      const last = globalThis.__creatorTick || 0;
+      if (Date.now() - last > 25 * 60e3) {
+        globalThis.__creatorTick = Date.now();
+        await showCreatorModal('tick');
+      }
+    }
   } catch { /* abaikan */ }
 }
 
@@ -546,7 +651,7 @@ async function paintTaskNoteSummary() {
   if (so) {
     so.textContent = open.length;
     const sub = $('#sum-task-sub');
-    if (sub) sub.textContent = open.length ? `${late ? `${late} TERLAMBAT · ` : ''}${open.slice(0, 2).map((x) => x.title.slice(0, 22)).join(' · ')}${open.length > 2 ? '…' : ''}` : 'semua selesai ✓';
+    if (sub) sub.textContent = open.length ? `${late ? `${late} TERLAMBAT · ` : ''}${open.slice(0, 2).map((x) => x.title.slice(0, 22)).join(' · ')}${open.length > 2 ? '…' : ''}` : 'semua selesai';
   }
   const nc = $('#sum-note-count');
   if (nc) {
@@ -1203,7 +1308,7 @@ async function vSoal() {
     const pct = Math.round((Object.keys(flow.ans).length / n) * 100);
     const unAns = n - Object.keys(flow.ans).length;
     stage().innerHTML = `
-    <div class="qfocus-bar"><button class="btn sm ghost" id="q-exit">✕ Keluar tes</button>
+    <div class="qfocus-bar"><button class="btn sm ghost" id="q-exit">X Keluar tes</button>
       <span class="tiny">Mode fokus — navigasi disembunyikan. Keluar TIDAK menyimpan nilai.</span></div>
     <div class="qexam-top"><span class="badge ${flow.actual === 'ai' ? 'ok' : 'dim'}">${escapeHtml(flow.actual === 'ai' ? 'AI' : 'offline')}</span>
       <span class="tiny">${escapeHtml(flow.name)}</span>
@@ -1221,7 +1326,7 @@ async function vSoal() {
       <button class="btn sm danger" id="q-giveup">Selesai & kumpulkan</button>
     </div>
     <div class="qexam-nav">${flow.qs.map((qq, k) => `<button class="qdot${k === i ? ' cur' : ''}${flow.ans[qq.id] !== undefined ? ' done' : ''}" data-jump="${k}">${k + 1}</button>`).join('')}</div>
-    <div class="tiny" id="q-unans" style="margin-top:8px">${unAns ? `Belum dijawab: ${unAns} soal — kumpulkan tetap bisa, yang kosong dihitung salah.` : 'Semua soal sudah dijawab ✓'}</div>`;
+    <div class="tiny" id="q-unans" style="margin-top:8px">${unAns ? `Belum dijawab: ${unAns} soal — kumpulkan tetap bisa, yang kosong dihitung salah.` : 'Semua soal sudah dijawab'}</div>`;
     stage().querySelectorAll('input[name=qx]').forEach((r) => r.addEventListener('change', () => {
       flow.ans[q.id] = Number(r.value);
       paintExam(); // refresh progress + highlight tanpa bocor kunci
@@ -1270,7 +1375,7 @@ async function vSoal() {
       if (r.detail[i]?.ok) perDiff[d].ok++;
     });
     stage().innerHTML = `
-    <div class="qfocus-bar"><span class="tiny">Hasil tersimpan otomatis ✓ · kunci & pembahasan terbuka di bawah</span>
+    <div class="qfocus-bar"><span class="tiny">Hasil tersimpan otomatis · kunci & pembahasan terbuka di bawah</span>
       <span class="spacer"></span><button class="btn sm ghost" id="q-back-top">Kembali ke awal ↑</button></div>
     <div class="card qresult"><div class="eyebrow">${icon('chart', 13)} Hasil tes ${timeUp ? '· waktu habis (otomatis dikumpulkan)' : ''}</div>
       <div class="qscore"><b>${r.score}</b><span>/ 100 · ${r.correct} benar dari ${r.total} · ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}</span>${xpMsg ? `<span>${escapeHtml(xpMsg)}</span>` : ''}</div>
@@ -1281,7 +1386,7 @@ async function vSoal() {
       }).join('')}</div>
       <div class="sec" style="margin-top:10px">Pembahasan (kunci baru dibuka di sini)</div>
       ${qs.map((q, i) => `<div class="q"><b class="q-title">${i + 1}. ${escapeHtml(q.q)}</b>
-        ${(q.choices || []).map((c, j) => `<div class="tiny${j === q.answer ? ' qkey' : (flow.ans[q.id] === j ? ' qwrong' : '')}">${'ABCD'[j] || '•'}. ${escapeHtml(c)}${j === q.answer ? ' ✓ kunci' : (flow.ans[q.id] === j ? ' ✕ jawabanmu' : '')}</div>`).join('')}
+        ${(q.choices || []).map((c, j) => `<div class="tiny${j === q.answer ? ' qkey' : (flow.ans[q.id] === j ? ' qwrong' : '')}">${'ABCD'[j] || '•'}. ${escapeHtml(c)}${j === q.answer ? ' [kunci]' : (flow.ans[q.id] === j ? ' [jawabanmu]' : '')}</div>`).join('')}
         ${q.bahas ? `<div class="tiny dim">${escapeHtml(q.bahas)}</div>` : ''}</div>`).join('')}
       <div class="row">
         <button class="btn sm primary" id="q-again">Tes lagi (acak ulang)</button>
@@ -1735,7 +1840,7 @@ function paintGenQuiz(box, code, mod, questions, cached) {
     } catch { await bumpActivity('q'); }
     box.querySelector('#gq-res').innerHTML = `<div class="s">Skor <b>${r.score}</b> — ${r.correct} benar / ${r.total}${xpMsg}</div>` + r.detail.map((d, i) => {
       const q = qs[i];
-      return `<div class="tiny" style="margin-top:6px">${d.ok ? '✓' : '✕'} ${escapeHtml(q.q.slice(0, 80))}<br>Kunci: <b>${'ABCD'[d.expected] ?? d.expected}</b>${q.bahas ? ` — ${escapeHtml(q.bahas)}` : ''}</div>`;
+      return `<div class="tiny" style="margin-top:6px">${d.ok ? "benar" : "salah"} ${escapeHtml(q.q.slice(0, 80))}<br>Kunci: <b>${'ABCD'[d.expected] ?? d.expected}</b>${q.bahas ? ` — ${escapeHtml(q.bahas)}` : ''}</div>`;
     }).join('');
   });
 }
@@ -2065,11 +2170,11 @@ function vPdf() {
       const doc = { course: String($('#pdf-md-course')?.value || '').trim(), title: guessTitle(md, 'Jawaban') };
       if (kind === 'docx') {
         const r = await exportDocx({ markdown: md, doc });
-        mdNote(`✓ ${r.name} (${(r.bytes / 1024).toFixed(0)} KB) terunduh`);
+        mdNote(`OK: ${r.name} (${(r.bytes / 1024).toFixed(0)} KB) terunduh`);
         notify(`DOCX terunduh: ${r.name}`);
       } else {
         const r = await exportPdf({ markdown: md, doc });
-        if (r.mode === 'runtime') { mdNote(`✓ ${r.name} terunduh (via ${r.engine})`); notify(`PDF terunduh: ${r.name}`); }
+        if (r.mode === 'runtime') { mdNote(`OK: ${r.name} terunduh (via ${r.engine})`); notify(`PDF terunduh: ${r.name}`); }
         else { mdNote('Tab siap-cetak dibuka → Ctrl+P → "Simpan sebagai PDF".' + (r.note ? ` (${String(r.note).slice(0, 90)})` : '')); notify('Tab siap-cetak dibuka'); }
       }
     } catch (e) { mdNote('Gagal: ' + e.message, true); notify('Export gagal: ' + e.message, 'error'); }
@@ -2358,6 +2463,36 @@ async function pdfFileToText(file, onProgress) {
   return `(judul: ${title} · ${n} hal${ocrCount ? `, ${ocrCount} hal via OCR` : ''})\n${text}`.slice(0, 12000);
 }
 
+// ---------- Persona + Folder setup (dibaca + bisa diedit AI) ----------
+// Disimpan di tuton_profile.persona: { nama, gaya, prodi, tujuan,
+// modulDir, downloadDir }. AI membaca via loadPersona() -> prompt disuntik ke
+// setiap chat. Folder dipilih SEKALI di awal (input directory + download dir)
+// agar jelas di mana modul, persona, dan hasil unduhan berada.
+const PERSONA_DEFAULT = { nama: '', gaya: 'santai-singkat', prodi: '', tujuan: '', modulDir: '', downloadDir: '' };
+
+async function loadPersona() {
+  try {
+    const p = (await load('tuton_profile', {})) || {};
+    const ps = { ...PERSONA_DEFAULT, ...(p.persona || {}) };
+    if (!ps.nama && p.nama) ps.nama = p.nama;
+    if (!ps.prodi && p.prodi) ps.prodi = p.prodi;
+    const bits = [];
+    if (ps.nama) bits.push(`Nama user: ${ps.nama}. Sapa dengan nama bila wajar.`);
+    if (ps.gaya === 'formal') bits.push('Gaya bahasa: formal dan rapi.');
+    else if (ps.gaya === 'detail') bits.push('Gaya bahasa: detail dan menyeluruh.');
+    else bits.push('Gaya bahasa: santai dan singkat, tanpa basa-basi.');
+    if (ps.prodi) bits.push(`Prodi: ${ps.prodi}.`);
+    if (ps.tujuan) bits.push(`Tujuan belajar: ${ps.tujuan}.`);
+    const prompt = bits.length ? `[PERSONA USER — sesuaikan jawaban:\n${bits.join('\n')}\nJangan menyebut kamu membaca bagian ini.]` : '';
+    return { ...ps, prompt };
+  } catch { return { ...PERSONA_DEFAULT, prompt: '' }; }
+}
+
+async function savePersona(patch) {
+  const p = (await load('tuton_profile', {})) || {};
+  await save('tuton_profile', { ...p, persona: { ...PERSONA_DEFAULT, ...(p.persona || {}), ...patch } });
+}
+
 // ---------- AI Agen (9router + skill tab + lampiran + isi field) ----------
 // Skill agen (lihat src/content/reader.js + blueprint):
 //  #1 baca tab aktif (TUTON_READ_TAB) — teks + seleksi, HANYA saat user klik.
@@ -2369,23 +2504,19 @@ async function vAi() {
   const cfg = await loadAIConfig();
   const agentMode = cfg.agentMode || 'semi';
   content.innerHTML = `
-    <div class="card">
-      <div class="eyebrow">${icon('cpu', 13)} AI Agen · <span class="dot on"></span>&nbsp;${escapeHtml((cfg.provider || '9router') === 'custom' ? 'custom' : (cfg.provider || '9router'))}</div>
-      <div class="tiny"><code class="inline">${escapeHtml(cfg.baseUrl || NINE_BASE)}</code> · model: <b>${escapeHtml(cfg.model || NINE_MODEL)}</b></div>
-      <div class="row" style="margin-top:6px">
-        <button class="btn sm ghost" id="ai-new" title="Mulai percakapan baru (arsipkan yg lama)">${icon('plus', 13)}Baru</button>
-        <select id="ai-hist" style="flex:1;min-width:140px" title="Riwayat sesi chat"></select>
-        <button class="btn sm ghost" id="ai-del" title="Hapus sesi ini">${icon('trash', 13)}</button>
+    <div class="card ai-card">
+      <div class="ai-head">
+        <span class="eyebrow" style="margin:0">${icon('cpu', 13)} AI Agen · <span class="dot on"></span>&nbsp;${escapeHtml((cfg.provider || '9router') === 'custom' ? 'custom' : (cfg.provider || '9router'))}</span>
+        <span class="ai-head-right"><span class="tiny dim" id="ai-room-label"></span><button class="btn sm ghost icon-only" id="ai-hist-open" title="Riwayat room chat">${icon('grid', 13)}</button></span>
       </div>
+      <div class="tiny dim" style="margin:2px 0 0"><code class="inline">${escapeHtml(cfg.baseUrl || NINE_BASE)}</code> · model: <b>${escapeHtml(cfg.model || NINE_MODEL)}</b></div>
       <div class="chat" id="chat"></div>
-      <div class="composer"><textarea id="ai-in" rows="2" placeholder="Tanya / perintahkan agen… (Shift+Enter baris baru, gambar bisa ditempel langsung)"></textarea><button class="btn primary icon-only" id="ai-send" title="Kirim">${icon('send', 15)}</button></div>
-      <div class="row">
+      <div class="composer"><textarea id="ai-in" rows="2" placeholder="Tanya / perintahkan agen… (Shift+Enter baris baru, gambar bisa ditempel langsung)"></textarea><button class="btn ghost icon-only" id="ai-new" title="Room baru (arsipkan room ini)">${icon('plus', 15)}</button><button class="btn primary icon-only" id="ai-send" title="Kirim">${icon('send', 15)}</button></div>
+      <div class="row ai-tools">
         <button class="btn sm ghost" id="ai-read">${icon('file', 13)}<span id="ai-read-txt">Sertakan isi tab aktif</span></button>
         <button class="btn sm ghost" id="ai-fields">${icon('grid', 13)}Daftar field tab</button>
         <label class="btn sm ghost" for="ai-file" style="cursor:pointer" title="PDF teks langsung terbaca; PDF gambar/PPT-di-PDF-kan otomatis di-OCR (Indonesia); PPT/DOCX: export ke PDF dulu">${icon('plus', 13)}Lampiran</label>
         <input type="file" id="ai-file" hidden multiple accept=".txt,.md,.csv,.json,.html,.pdf,.png,.jpg,.jpeg,.webp,.gif,.mp3,.wav,.m4a,.ogg,.mp4,.webm,.ppt,.pptx,.odp,.doc,.docx,.odt">
-      </div>
-      <div class="row">
         <button class="btn sm ghost" id="ai-shot" title="Screenshot area: drag di tab aktif, hasilnya masuk lampiran + dibaca AI">${icon('crop', 13)}SS seleksi</button>
         <button class="btn sm ghost" id="ai-vis" title="Screenshot area terlihat tab aktif">${icon('camera', 13)}SS tampak</button>
         <button class="btn sm ghost" id="ai-draw" title="Corat-coret di tab aktif (klik lagi untuk kunci, coretan ikut scroll)">${icon('pen', 13)}Draw</button>
@@ -2393,17 +2524,17 @@ async function vAi() {
       </div>
       <div class="row">
         <select id="ai-mode" style="max-width:190px" title="Mode agen isi field">
-          <option value="semi">Semi: AI usul → saya klik OK</option>
+          <option value="semi">Semi: AI usul, saya klik OK</option>
           <option value="auto">Otomatis: AI langsung isi</option>
           <option value="manual">Manual: hanya teks panduan</option>
         </select>
         <select id="ai-depth" style="max-width:170px" title="Kecepatan vs kedalaman jawaban (fungsional)">
-          <option value="cepat">⚡ Cepat: ringkas</option>
-          <option value="mendalam">🔍 Mendalam: detail</option>
+          <option value="cepat">Cepat: ringkas</option>
+          <option value="mendalam">Mendalam: detail</option>
         </select>
         <button class="btn sm ghost" data-go="setting">${icon('gear', 13)}Setting AI</button>
       </div>
-      <div class="tiny" id="ai-ctx">Konteks: profil akademik. Tab & lampiran hanya dibaca saat kamu klik tombol.</div>
+      <div class="tiny" id="ai-ctx">Konteks: profil akademik. Tab dan lampiran hanya dibaca saat kamu klik tombol.</div>
             <div class="att-row" id="ai-att"></div>
             <div class="sec">Jadikan file (DOCX / PDF)</div>
             <div class="card">
@@ -2476,11 +2607,11 @@ async function vAi() {
       const doc = { course: expCourse(), title: guessTitle(md, 'Jawaban') };
       if (kind === 'docx') {
         const r = await exportDocx({ markdown: md, doc });
-        expNote(`✓ ${r.name} (${(r.bytes / 1024).toFixed(0)} KB) terunduh`);
+        expNote(`OK: ${r.name} (${(r.bytes / 1024).toFixed(0)} KB) terunduh`);
         notify(`DOCX terunduh: ${r.name}`);
       } else if (kind === 'pdf') {
         const r = await exportPdf({ markdown: md, doc });
-        if (r.mode === 'runtime') { expNote(`✓ ${r.name} terunduh (via ${r.engine})`); notify(`PDF terunduh: ${r.name}`); }
+        if (r.mode === 'runtime') { expNote(`OK: ${r.name} terunduh (via ${r.engine})`); notify(`PDF terunduh: ${r.name}`); }
         else { expNote('Tab siap-cetak dibuka → Ctrl+P → "Simpan sebagai PDF".' + (r.note ? ` (${String(r.note).slice(0, 90)})` : '')); notify('Tab siap-cetak dibuka'); }
       } else {
         // .md cadangan: bisa dipakai di app lain (Notion, Typora, dsb).
@@ -2490,7 +2621,7 @@ async function vAi() {
         a.download = `${guessTitle(md, 'jawaban')}.md`;
         a.click();
         setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
-        expNote(`✓ ${a.download} terunduh`);
+        expNote(`${a.download} terunduh terunduh`);
       }
     } catch (e) {
       expNote('Gagal: ' + e.message, true);
@@ -2531,7 +2662,7 @@ async function vAi() {
     if (attachments.length) bits.push(`${attachments.length} lampiran`);
     $('#ai-ctx').textContent = bits.length ? 'Konteks: profil + ' + bits.join(' + ') + '.' : 'Konteks: profil akademik. Tab & lampiran hanya dibaca saat kamu klik tombol.';
     const rt = $('#ai-read-txt');
-    if (rt) rt.textContent = tabCtx.tabText ? 'Tab terlampir ✓ (klik untuk ganti)' : 'Sertakan isi tab aktif';
+    if (rt) rt.textContent = tabCtx.tabText ? 'Tab terlampir (klik untuk ganti)' : 'Sertakan isi tab aktif';
     // Chip lampiran: nama + ukuran + tombol hapus per file.
     const box = $('#ai-att');
     if (box) {
@@ -2751,11 +2882,11 @@ async function vAi() {
         doc.label = docLabel(doc) || doc.title;
         if (kind === 'docx') {
           const r = await exportDocx({ markdown, doc });
-          say(`✓ ${r.name} terunduh`);
+          say(`OK: ${r.name} terunduh`);
           notify(`DOCX terunduh: ${r.name}`);
         } else {
           const r = await exportPdf({ markdown, doc });
-          if (r.mode === 'runtime') { say(`✓ ${r.name} terunduh (${r.engine})`); notify(`PDF terunduh: ${r.name}`); }
+          if (r.mode === 'runtime') { say(`OK: ${r.name} terunduh (${r.engine})`); notify(`PDF terunduh: ${r.name}`); }
           else { say('Tab siap-cetak dibuka — Ctrl+P → Simpan sebagai PDF'); notify(r.note ? `PDF via tab cetak (${String(r.note).slice(0, 60)})` : 'Tab siap-cetak dibuka'); }
         }
       } catch (e) {
@@ -2908,7 +3039,7 @@ async function vAi() {
       b.addEventListener('click', async () => {
         try {
           await navigator.clipboard.writeText(b.dataset.code || '');
-          b.textContent = 'Disalin ✓';
+          b.textContent = 'Disalin';
           setTimeout(() => { b.textContent = 'Salin'; }, 1500);
         } catch { b.textContent = 'Gagal'; }
       });
@@ -2961,10 +3092,14 @@ async function vAi() {
       const deep = ($('#ai-depth')?.value || cfg.aiDepth || 'cepat') === 'mendalam';
       const maxTok = deep ? Math.max(Number(cfg.maxTokens) || 2000, 2000) : Math.min(Number(cfg.maxTokens) || 800, 800);
       const cfgSend = { ...cfg, maxTokens: maxTok };
+      // Persona user: dibaca dari profil + folder setup. AI WAJIB menyesuaikan
+      // gaya bahasa + memanggil nama. Diedit di Setting > Persona & Folder.
+      const persona = await loadPersona();
       // Susun pesan: teks lampiran digabung ke prompt; GAMBAR jadi image_url.
       const textAtt = attachments.filter((a) => a.kind === 'text');
       const imgAtt = attachments.filter((a) => a.kind === 'image');
       let fullQ = q;
+      if (persona.prompt) fullQ = `${persona.prompt}\n\nPERTANYAAN:\n${q}`;
       if (deep) fullQ += `\n\n[KEDALAMAN: jawab MENDALAM dan detail — definisi lengkap, langkah penurunan rumus, contoh angka, jebakan soal tuton, checklist pemahaman.]`;
       else fullQ += `\n\n[KECEPATAN: jawab CEPAT dan ringkas — inti + poin penting saja, tanpa basa-basi.]`;
       for (const a of textAtt) fullQ += `\n\n--- lampiran ${a.name} ---\n${deep ? a.text : String(a.text || '').slice(0, 4000)}`;
@@ -3109,13 +3244,50 @@ async function vAi() {
     return sesCache;
   };
   const curSes = () => sesCache.map[sesCache.cur];
-  const paintHist = () => {
-    const sel = $('#ai-hist');
-    sel.innerHTML = sesCache.ids.map((sid) => {
-      const s = sesCache.map[sid];
-      const label = `${(s?.title || 'Sesi').slice(0, 28)} · ${new Date(s?.at || Date.now()).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}`;
-      return `<option value="${sid}"${sid === sesCache.cur ? ' selected' : ''}>${escapeHtml(label)}</option>`;
-    }).join('');
+  const roomLabel = () => {
+    const el = $('#ai-room-label');
+    if (!el) return;
+    const s = curSes();
+    el.textContent = (s?.title || 'Room baru').slice(0, 30);
+  };
+  const paintHist = () => { roomLabel(); };
+  const openHistPanel = () => {
+    let p = $('#ai-hist-panel');
+    if (p) { p.remove(); return; } // toggle tutup
+    p = document.createElement('div');
+    p.id = 'ai-hist-panel';
+    p.innerHTML = `<div class="eyebrow" style="margin:0 0 6px">Riwayat room (${sesCache.ids.length}/20)</div>` +
+      sesCache.ids.map((sid) => {
+        const s = sesCache.map[sid];
+        const label = `${(s?.title || 'Room').slice(0, 30)} · ${new Date(s?.at || Date.now()).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}`;
+        return `<div class="hist-row${sid === sesCache.cur ? ' cur' : ''}" data-sid="${sid}"><span>${escapeHtml(label)}</span><button title="Hapus room ini">X</button></div>`;
+      }).join('');
+    p.querySelectorAll('[data-sid]').forEach((row) => {
+      row.querySelector('span').addEventListener('click', async () => {
+        sesCache.cur = row.dataset.sid;
+        await save(SES_KEY, sesCache);
+        roomLabel();
+        renderSesMsgs();
+        p.remove();
+      });
+      row.querySelector('button').addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (!confirm('Hapus room chat ini?')) return;
+        delete sesCache.map[row.dataset.sid];
+        sesCache.ids = sesCache.ids.filter((x) => sesCache.map[x]);
+        if (!sesCache.ids.length) {
+          const sid = 's' + Date.now().toString(36);
+          sesCache.ids = [sid];
+          sesCache.map[sid] = { title: 'Percakapan baru', at: Date.now(), msgs: [] };
+        }
+        sesCache.cur = sesCache.ids[0];
+        await save(SES_KEY, sesCache);
+        roomLabel();
+        renderSesMsgs();
+        p.remove();
+      });
+    });
+    $('#ai-hist-open').after(p);
   };
   const renderSesMsgs = () => {
     const box = $('#chat');
@@ -3152,39 +3324,23 @@ async function vAi() {
     await save(SES_KEY, sesCache);
   };
   await loadSes();
-  paintHist();
+  roomLabel();
   renderSesMsgs();
+  roomLabel();
   if (!curSes().msgs.length) {
-    push('ai', 'Halo. Saya agen lokal-first — bisa baca tab aktif, terima lampiran, dan isi field (mode semi-otomatis default). Datamu tidak keluar perangkat kecuali ke 9router lokalmu.');
+    push('ai', 'Halo. Saya agen lokal-first — bisa baca tab aktif, terima lampiran, dan isi field (mode semi-otomatis default). Data hanya keluar ke provider AI yang kamu pilih di Setting.');
   }
-  $('#ai-hist').addEventListener('change', async () => {
-    sesCache.cur = $('#ai-hist').value;
-    await save(SES_KEY, sesCache);
-    renderSesMsgs();
-  });
+  $('#ai-hist-open').addEventListener('click', openHistPanel);
   $('#ai-new').addEventListener('click', async () => {
     const sid = 's' + Date.now().toString(36);
     sesCache.ids.unshift(sid);
-    sesCache.ids = sesCache.ids.slice(0, 20); // max 20 sesi
+    sesCache.ids = sesCache.ids.slice(0, 20); // max 20 room
     sesCache.cur = sid;
     sesCache.map[sid] = { title: 'Percakapan baru', at: Date.now(), msgs: [] };
     await save(SES_KEY, sesCache);
-    paintHist();
+    roomLabel();
     renderSesMsgs();
-  });
-  $('#ai-del').addEventListener('click', async () => {
-    if (!confirm('Hapus sesi chat ini?')) return;
-    delete sesCache.map[sesCache.cur];
-    sesCache.ids = sesCache.ids.filter((x) => sesCache.map[x]);
-    if (!sesCache.ids.length) {
-      const sid = 's' + Date.now().toString(36);
-      sesCache.ids = [sid];
-      sesCache.map[sid] = { title: 'Percakapan baru', at: Date.now(), msgs: [] };
-    }
-    sesCache.cur = sesCache.ids[0];
-    await save(SES_KEY, sesCache);
-    paintHist();
-    renderSesMsgs();
+    notify('Room baru dibuka');
   });
   // Bungkus sesi: send() asli sudah menyimpan via flag sendUseSes di
   // push/renderAi — di sini cukup alihkan listener ke sendSes.
@@ -3340,7 +3496,7 @@ async function vAi() {
         const kind2 = kind || 'docx';
         note(`Menyusun ${kind2.toUpperCase()} dari teks kamu…`);
         const res = await doExport(kind2, q, docMeta, (m) => note(m));
-        if (res?.ok) note(`✓ ${res.name || 'file'} terunduh (isi: teks pertanyaanmu).`);
+        if (res?.ok) note(`${res.name || 'file'} terunduh (isi: teks pertanyaanmu).`);
       });
       $('#ae-retry')?.addEventListener('click', async () => {
         note('Minta AI menulis materi…');
@@ -3350,7 +3506,7 @@ async function vAi() {
           if (!a || looksRefusal(a)) { note('AI masih menolak. Pakai tombol "Pakai materi/soal saya" atau halaman Jadikan File (tempel materinya).', true); return; }
           globalThis.__lastAiMd = a;
           const res = await doExport(kind || 'docx', a, docMeta, (m) => note(m));
-          if (res?.ok) note(`✓ ${res.name || 'file'} terunduh.`);
+          if (res?.ok) note(`${res.name || 'file'} terunduh.`);
         } catch (e) { note('Gagal: ' + e.message, true); }
       });
       $('#ae-openex')?.addEventListener('click', () => go('export'));
@@ -3376,7 +3532,7 @@ async function vAi() {
     if (res?.mode === 'print') {
       box.innerHTML = `<div class="card" style="margin-top:8px"><div class="tiny">PDF dibuka di tab cetak (runtime/Word tidak tersedia). Tekan <b>Ctrl+P → Simpan sebagai PDF</b>.</div></div>`;
     } else if (res?.ok) {
-      box.innerHTML = `<div class="card" style="margin-top:8px"><div class="tiny" style="color:var(--acc)">✓ ${escapeHtml(res.name || 'file')} terunduh ke folder Downloads.</div></div>`;
+      box.innerHTML = `<div class="card" style="margin-top:8px"><div class="tiny" style="color:var(--acc)">${escapeHtml(res.name || 'file')} terunduh ke folder Downloads.</div></div>`;
     } else {
       box.innerHTML = `<div class="card" style="margin-top:8px"><div class="tiny" style="color:var(--red)">Gagal: ${escapeHtml(res?.error || 'tidak diketahui')}</div><div class="row"><button class="btn sm" id="ae-docx2">Coba DOCX</button><button class="btn sm ghost" id="ae-pdf2">Coba PDF</button></div></div>`;
       $('#ae-docx2')?.addEventListener('click', () => { box.innerHTML = ''; doExport('docx', md, docMeta, (m) => push('ai', m)); });
@@ -3481,11 +3637,11 @@ async function vExport() {
       doc.label = docLabel(doc) || doc.title;
       if (kind === 'docx') {
         const r = await exportDocx({ markdown: md, doc });
-        note(`✓ ${r.name} (${(r.bytes / 1024).toFixed(0)} KB) terunduh — cek folder Downloads.`);
+        note(`OK: ${r.name} (${(r.bytes / 1024).toFixed(0)} KB) terunduh — cek folder Downloads.`);
         notify(`DOCX terunduh: ${r.name}`);
       } else {
         const r = await exportPdf({ markdown: md, doc });
-        if (r.mode === 'runtime') { note(`✓ ${r.name} terunduh (via ${r.engine}).`); notify(`PDF terunduh: ${r.name}`); }
+        if (r.mode === 'runtime') { note(`OK: ${r.name} terunduh (via ${r.engine}).`); notify(`PDF terunduh: ${r.name}`); }
         else { note('Tab siap-cetak dibuka → Ctrl+P → "Simpan sebagai PDF".' + (r.note ? ` Catatan: ${String(r.note).slice(0, 120)}` : ''), true); notify('Tab siap-cetak dibuka'); }
       }
     } catch (e) { note('Gagal: ' + e.message, true); notify('Export gagal: ' + e.message, 'error'); }
@@ -3811,6 +3967,8 @@ async function vCap() {
 async function vSetting() {
   const p = await load('tuton_profile', { prodi: '', targetIPK: 3.5, targetSKS: 145 });
   const cfg = await loadAIConfig();
+  const ps = { ...PERSONA_DEFAULT, ...((p.persona) || {}) };
+  const theme = p.theme || 'dark';
   content.innerHTML = `
     <div class="sec">Profil akademik</div>
     <div class="card">
@@ -3848,6 +4006,27 @@ async function vSetting() {
       <label class="f">Token runtime (wajib bila runtime di VPS, kosongkan di laptop)</label><input id="a-rttoken" type="password" value="${escapeHtml(cfg.runtimeToken || '')}" placeholder="sama dgn RUNTIME_TOKEN di router/.env server">
       <div class="row"><button class="btn sm" id="a-rttest">Tes runtime</button></div>
       <div class="s mono" id="a-rt-out" style="white-space:pre-wrap"></div>
+    </div>
+    <div class="sec">Persona user (dibaca AI tiap chat)</div>
+    <div class="card">
+      <div class="tiny" style="margin-bottom:6px">AI membaca persona ini otomatis dan menyesuaikan gaya + sapaan. Bisa juga diubah lewat chat ("ganti gaya bahasaku jadi formal").</div>
+      <div class="row"><div style="flex:1;min-width:120px"><label class="f">Nama panggilan</label><input id="ps-nama" value="${escapeHtml(ps.nama || '')}" placeholder="cth: Fadil"></div>
+      <div style="flex:1;min-width:120px"><label class="f">Gaya bahasa</label><select id="ps-gaya"><option value="santai-singkat">Santai + singkat</option><option value="formal">Formal + rapi</option><option value="detail">Detail + menyeluruh</option></select></div></div>
+      <label class="f">Tujuan belajar</label><input id="ps-tujuan" value="${escapeHtml(ps.tujuan || '')}" placeholder="cth: lulus EKMA5102 nilai A">
+      <div class="row"><button class="btn primary sm" id="ps-save">Simpan persona</button></div>
+    </div>
+    <div class="sec">Folder setup (ditentukan di awal)</div>
+    <div class="card">
+      <div class="tiny" style="margin-bottom:6px">Pilih SEKALI di awal agar jelas: modul dibaca dari folder modul, hasil unduhan ke folder download. Browser tidak bisa menulis sembarang path — unduhan tetap lewat folder Downloads Chrome, nama folder di bawah sebagai pengingat + label file.</div>
+      <div class="row"><div style="flex:1;min-width:140px"><label class="f">Folder modul</label><input id="ps-moddir" value="${escapeHtml(ps.modulDir || '')}" placeholder="cth: D:/Kuliah/Modul-UT"></div>
+      <div style="flex:1;min-width:140px"><label class="f">Folder hasil</label><input id="ps-dldir" value="${escapeHtml(ps.downloadDir || '')}" placeholder="cth: D:/Kuliah/Hasil"></div></div>
+      <div class="row"><button class="btn primary sm" id="ps-dir-save">Simpan folder</button><button class="btn ghost sm" id="ps-dir-open">Buka folder modul (Bank Soal)</button></div>
+    </div>
+    <div class="sec">Tampilan</div>
+    <div class="card">
+      <label class="f">Theme</label>
+      <div class="row"><button class="btn sm${theme !== 'light' ? ' primary' : ''}" id="th-dark">Gelap</button><button class="btn sm${theme === 'light' ? ' primary' : ''}" id="th-light">Putih (aksen hijau)</button></div>
+      <div class="tiny">Putih = background putih, teks hijau tua, aksen hijau. Berlaku ke semua halaman.</div>
     </div>
     <div class="sec">Data & dukungan</div>
     <div class="card">
@@ -3915,7 +4094,7 @@ async function vSetting() {
     try {
       const d = await diagConnection($('#a-url').value.trim(), $('#a-key').value.trim() || cfg.apiKey, $('#a-model').value.trim(), { chatPath: document.querySelector('#a-chatpath')?.value.trim(), modelsPath: document.querySelector('#a-modelspath')?.value.trim() });
       const lines = [`Base: ${d.base} · key ${d.keyLen} char · model ${d.model}`, ''];
-      for (const s of d.steps) lines.push(`${s.ok ? '✅' : '❌'} ${s.step}\n   ${s.detail}`);
+      for (const s of d.steps) lines.push(`${s.ok ? "OK" : "GAGAL"} ${s.step}\n   ${s.detail}`);
       box.textContent = lines.join('\n');
     } catch (e) { box.textContent = 'Diagnosa gagal total: ' + e.message; }
   });
@@ -3933,6 +4112,24 @@ async function vSetting() {
       box.textContent = `OK: ${j.service || '?'} · pdf:${j.pdf || '?'} · token:${j.token ? 'wajib' : 'bebas'} · HTTP ${r.status}\nChat AI tetap langsung ke provider (tidak lewat sini) — runtime hanya tools /api/read + /api/models.`;
     } catch (e) { box.textContent = 'Tes runtime gagal: ' + e.message; }
   });
+  $('#ps-gaya').value = ps.gaya || 'santai-singkat';
+  $('#ps-save').addEventListener('click', async () => {
+    await savePersona({ nama: $('#ps-nama').value.trim(), gaya: $('#ps-gaya').value, tujuan: $('#ps-tujuan').value.trim() });
+    notify('Persona tersimpan — AI langsung menyesuaikan');
+  });
+  $('#ps-dir-save').addEventListener('click', async () => {
+    await savePersona({ modulDir: $('#ps-moddir').value.trim(), downloadDir: $('#ps-dldir').value.trim() });
+    notify('Folder setup tersimpan (pengingat lokasi modul + hasil)');
+  });
+  $('#ps-dir-open').addEventListener('click', () => go('soal'));
+  const setTheme = async (t) => {
+    const p = (await load('tuton_profile', {})) || {};
+    await save('tuton_profile', { ...p, theme: t });
+    await applyTheme();
+    render();
+  };
+  $('#th-dark').addEventListener('click', () => setTheme('dark'));
+  $('#th-light').addEventListener('click', () => setTheme('light'));
   $('#d-export').addEventListener('click', async () => {
     const keys = ['tuton_grades', 'tuton_profile', 'tuton_tracker', 'tuton_qcache', 'tuton_qseen', 'tuton_qkey', 'tuton_qlog', 'tuton_todo', 'tuton_tasks', 'tuton_notes', 'tuton_summary', 'tuton_genquiz', 'tuton_modtexts', 'tuton_ai', 'tuton_ai_sessions', 'tuton_activity', 'tuton_bmp'];
     const out = {};
