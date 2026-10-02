@@ -1,0 +1,16 @@
+{
+  "type": "module",
+  "name": "tuton-os",
+  "version": "0.1.0",
+  "description": "Tuton OS — extension lokal-first + router lokal (tanpa Vercel/GitHub/Supabase).",
+  "scripts": {
+    "router": "node router/server.js",
+    "check": "node --check sidepanel/app.js && node --check sidepanel/print.js && node --check router/server.js && node --check src/lib/gpa.js && node --check src/lib/qbank.js && node --check src/ai/client.js && node --check src/worker/index.js && node --check src/export/zip.js && node --check src/export/docx.js && node --check src/export/mdblocks.js && node --check src/export/printdoc.js && node --check src/export/pending.js && node --check src/export/index.js && echo OK",
+    "test:export": "node scripts/export-smoke.mjs && node scripts/export-extension-sim.mjs && node scripts/printdoc-sim.mjs && node scripts/detect-file-intent.test.mjs && node scripts/refusal-detect.test.mjs && node scripts/label.test.mjs",
+    "test:export:word": "node scripts/export-smoke.mjs --word && node scripts/export-verify.mjs out-export",
+    "test:ai": "node scripts/sysmsg-check.mjs"
+  },
+  "dependencies": {
+    "pdfjs-dist": "^3.11.174"
+  }
+}

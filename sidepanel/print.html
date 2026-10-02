@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<title>Cetak jawaban — Tuton OS</title>
+<link rel="stylesheet" href="../src/bmp/vendor/katex/katex.min.css">
+<style>
+  @page { size: A4; margin: 20mm 18mm; }
+  html, body { margin: 0; padding: 0; background: #fff; }
+  body { font-family: "Segoe UI", Roboto, Arial, sans-serif; color: #0f172a; font-size: 12pt; line-height: 1.55; }
+  .hint { position: fixed; top: 8px; left: 50%; transform: translateX(-50%); background: #0f172a; color: #e2e8f0;
+          padding: 8px 14px; border-radius: 999px; font-size: 11px; z-index: 9; }
+  .wrap { max-width: 174mm; margin: 0 auto; padding: 12mm 0 20mm; }
+  h1.doc { font-size: 18pt; text-align: center; margin: 0 0 6px; }
+  .meta { text-align: center; color: #475569; font-size: 10.5pt; margin-bottom: 22px; }
+  h2, h3, h4 { color: #0f172a; line-height: 1.25; margin: 18px 0 8px; }
+  h2 { font-size: 14pt; } h3 { font-size: 12.5pt; } h4 { font-size: 12pt; }
+  p { margin: 0 0 10px; text-align: justify; }
+  ul, ol { margin: 0 0 12px 20px; } li { margin-bottom: 4px; }
+  table { border-collapse: collapse; width: 100%; margin: 10px 0 16px; font-size: 11pt; }
+  th, td { border: 1px solid #cbd5e1; padding: 6px 8px; text-align: left; vertical-align: top; }
+  th { background: #f1f5f9; }
+  pre { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px; font-size: 10pt; white-space: pre-wrap; }
+  code { font-family: Consolas, "Courier New", monospace; }
+  .eq { text-align: center; margin: 14px 0; }
+  hr { border: 0; border-top: 1px solid #cbd5e1; margin: 18px 0; }
+  .err { color: #b91c1c; }
+  @media print { .hint { display: none; } }
+</style>
+</head>
+<body>
+<div class="hint" id="hint">Menyiapkan…</div>
+<div class="wrap">
+  <h1 class="doc" id="course">JAWABAN</h1>
+  <div class="meta" id="meta"></div>
+  <div id="body"></div>
+</div>
+<script src="../src/bmp/vendor/katex/katex.min.js"></script>
+<script type="module" src="./print.js"></script>
+</body>
+</html>

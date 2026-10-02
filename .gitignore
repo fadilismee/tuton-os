@@ -1,0 +1,8 @@
+# Tuton OS — file lokal yang TIDAK boleh di-commit
+src/ai/key.local.js
+router/.env
+node_modules/
+out-export/
+*.log
+.DS_Store
+Thumbs.db
