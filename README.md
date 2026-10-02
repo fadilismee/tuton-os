@@ -11,6 +11,18 @@ Dibuat oleh **zerotime.web.id**.
 
 ---
 
+## ⬇️ Unduh cepat (langsung pakai)
+
+**[Download tuton-os-v0.1.0.zip](https://github.com/fadilismee/tuton-os/releases/download/v0.1.0/tuton-os-v0.1.0.zip)** (10 MB)
+
+Atau lihat semua rilis di halaman
+[Releases](https://github.com/fadilismee/tuton-os/releases).
+
+Setelah unduh: ekstrak → buka `chrome://extensions` → nyalakan **Developer
+mode** → **Load unpacked** → pilih folder `tuton-os`. Detailnya di bawah.
+
+---
+
 ## Fitur
 
 **AI Agen** — chat AI pakai API key milikmu sendiri (9router lokal, OpenAI,
