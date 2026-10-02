@@ -378,7 +378,8 @@ async function vDashboard() {
       <div class="card"><div class="stat"><span class="stat-ic">${icon('calendar', 16)}</span><div><div class="eyebrow">Tugas terbuka</div><div class="num" id="sum-task-open">0</div><div class="s" id="sum-task-sub">belum ada</div></div></div><div class="row" style="margin-bottom:0"><button class="btn sm block" data-ov="tugas">${icon('calendar', 13)}Kelola tugas</button></div></div>
       <div class="card"><div class="stat"><span class="stat-ic">${icon('text', 16)}</span><div><div class="eyebrow">Catatan</div><div class="num" id="sum-note-count">0</div><div class="s" id="sum-note-sub">belum ada</div></div></div><div class="row" style="margin-bottom:0"><button class="btn sm block" data-ov="catatan">${icon('text', 13)}Kelola catatan</button></div></div>
     </div>
-    <div class="foot">LOCAL-FIRST · DATA DI PERANGKAT</div>`;
+    <div class="foot">LOCAL-FIRST · DATA DI PERANGKAT</div>
+    <div id="creator-slot"></div>`;
   content.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => go(b.dataset.go)));
   content.querySelectorAll('[data-ov]').forEach((b) => b.addEventListener('click', () => openOverlay(b.dataset.ov, 'dashboard')));
   const setYear = async (y) => {
@@ -408,6 +409,65 @@ async function vDashboard() {
     const el = $('#router-dot');
     if (el) el.innerHTML = s2.ok ? `<span class="dot on"></span> ${s2.detail.split(' ')[0]} model` : '<span class="dot off"></span> offline';
   } catch { const el = $('#router-dot'); if (el) el.innerHTML = '<span class="dot off"></span> offline'; }
+  paintCreator($('#creator-slot'));
+}
+
+// ---------- Dukung creator: banner ads simple, gampang di-close ----------
+// Prinsip: lokal-first, tanpa tracker. Iklan = daftar statis di
+// src/creator/ads.json (judul + desc + url + cta). User tutup dengan 1 klik,
+// pilihan "jangan tampilkan 7 hari" / "matikan total" tersimpan di
+// tuton_profile.creatorAds. Tidak ada fetch, tidak ada impression pixel,
+// tidak ada auto-popup — hanya 1 slot di bawah dashboard.
+const CREATOR_ADS = [
+  { id: 'kopi', title: 'Dukung Tuton OS ☕', desc: 'Traktir pembuatnya secangkir kopi biar update terus.', url: 'https://zerotime.web.id', cta: 'Dukung' },
+  { id: 'jasa', title: 'Butuh bantuan tugas?', desc: 'Layanan pendampingan belajar — tanya-tanya dulu gratis.', url: 'https://zerotime.web.id', cta: 'Lihat' },
+];
+
+async function creatorPref() {
+  try {
+    const p = (await load('tuton_profile', {})) || {};
+    return p.creatorAds || { off: false, hideUntil: 0 };
+  } catch { return { off: false, hideUntil: 0 }; }
+}
+
+async function setCreatorPref(patch) {
+  try {
+    const p = (await load('tuton_profile', {})) || {};
+    await save('tuton_profile', { ...p, creatorAds: { off: false, hideUntil: 0, ...(p.creatorAds || {}), ...patch } });
+  } catch { /* abaikan */ }
+}
+
+async function paintCreator(slot) {
+  if (!slot) return;
+  try {
+    const pref = await creatorPref();
+    if (pref.off || Date.now() < (pref.hideUntil || 0)) { slot.innerHTML = ''; return; }
+    const ad = CREATOR_ADS[Math.floor(Date.now() / 864e5) % CREATOR_ADS.length];
+    slot.innerHTML = `<div class="creator-ad" role="complementary" aria-label="Dukung creator">
+      <button class="creator-x" title="Tutup iklan">✕</button>
+      <div class="creator-body"><b>${escapeHtml(ad.title)}</b><span>${escapeHtml(ad.desc)}</span></div>
+      <div class="creator-row">
+        <a class="btn sm primary creator-go" href="${escapeHtml(ad.url)}" target="_blank" rel="noopener">${escapeHtml(ad.cta)}</a>
+        <button class="btn sm ghost" data-snooze>Besok lagi</button>
+        <button class="btn sm ghost" data-off>Matikan</button>
+      </div>
+    </div>`;
+    slot.querySelector('.creator-x').addEventListener('click', async () => {
+      await setCreatorPref({ hideUntil: Date.now() + 864e5 });
+      slot.innerHTML = '';
+      notify('Iklan disembunyikan sampai besok');
+    });
+    slot.querySelector('[data-snooze]').addEventListener('click', async () => {
+      await setCreatorPref({ hideUntil: Date.now() + 864e5 });
+      slot.innerHTML = '';
+      notify('Oke, besok lagi ya 🙏');
+    });
+    slot.querySelector('[data-off]').addEventListener('click', async () => {
+      if (!confirm('Matikan banner dukung creator selamanya? (bisa dinyalakan lagi di Setting)')) return;
+      await setCreatorPref({ off: true });
+      slot.innerHTML = '';
+    });
+  } catch { /* banner best-effort, jangan rusak dashboard */ }
 }
 
 // Tooltip custom gelap untuk sel heatmap: instan, ngikutin kursor,
@@ -3784,9 +3844,12 @@ async function vSetting() {
       <div class="row"><button class="btn sm" id="a-rttest">Tes runtime</button></div>
       <div class="s mono" id="a-rt-out" style="white-space:pre-wrap"></div>
     </div>
-    <div class="sec">Data</div>
+    <div class="sec">Data & dukungan</div>
     <div class="card">
       <label class="f">ID extension BMP Terbuka (opsional, untuk handshake)</label><input id="d-bmp" value="${escapeHtml(p.bmpExtId || '')}" placeholder="cth: mkgmigiagipmfdlppehhmckfokmpnmlm" class="mono">
+      <label class="f">Banner dukung creator</label>
+      <div class="row"><button class="btn sm ghost" id="d-ads">${icon('check', 13)}${(p.creatorAds?.off) ? 'Nyalakan lagi' : 'Tampilkan sekarang'}</button></div>
+      <div class="tiny">${(p.creatorAds?.off) ? 'Banner sedang MATI total.' : 'Banner muncul 1× di bawah dashboard, gampang di-close.'}</div>
       <div class="row"><button class="btn" id="d-export">${icon('download', 14)}Export JSON</button><button class="btn danger" id="d-wipe">${icon('trash', 14)}Hapus semua</button></div>
       <div class="tiny">Backup berisi nilai, tracker, soal, dan setting — tersimpan sebagai file di perangkatmu.</div>
     </div>`;
@@ -3872,6 +3935,13 @@ async function vSetting() {
     download(`tuton-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(out, null, 2), 'application/json');
   });
   $('#d-wipe').addEventListener('click', async () => { if (confirm('Hapus SEMUA data lokal?')) { await chrome.storage.local.clear(); notify('Data lokal dihapus'); render(); } });
+  $('#d-ads').addEventListener('click', async () => {
+    const p = (await load('tuton_profile', {})) || {};
+    const off = !!p.creatorAds?.off;
+    await save('tuton_profile', { ...p, creatorAds: { off: !off, hideUntil: 0 } });
+    notify(off ? 'Banner dinyalakan lagi — cek dashboard' : 'Banner dimatikan total');
+    render();
+  });
 }
 
 buildNav();
