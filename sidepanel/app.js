@@ -412,16 +412,54 @@ async function vDashboard() {
   paintCreator($('#creator-slot'));
 }
 
-// ---------- Dukung creator: banner ads simple, gampang di-close ----------
-// Prinsip: lokal-first, tanpa tracker. Iklan = daftar statis di
-// src/creator/ads.json (judul + desc + url + cta). User tutup dengan 1 klik,
-// pilihan "jangan tampilkan 7 hari" / "matikan total" tersimpan di
-// tuton_profile.creatorAds. Tidak ada fetch, tidak ada impression pixel,
-// tidak ada auto-popup — hanya 1 slot di bawah dashboard.
-const CREATOR_ADS = [
-  { id: 'kopi', title: 'Dukung Tuton OS ☕', desc: 'Traktir pembuatnya secangkir kopi biar update terus.', url: 'https://zerotime.web.id', cta: 'Dukung' },
-  { id: 'jasa', title: 'Butuh bantuan tugas?', desc: 'Layanan pendampingan belajar — tanya-tanya dulu gratis.', url: 'https://zerotime.web.id', cta: 'Lihat' },
-];
+// ---------- Dukung creator: POPUP QRIS full, gampang di-close ----------
+// Prinsip: lokal-first, tanpa tracker. QR = assets/qris.png (di-crop dari
+// qr.png kamu, cuma matriks QR-nya aja, 512px). Popup muncul 1×/hari di
+// dashboard. Tutup super gampang: tombol ✕ besar, klik luar popup, atau
+// tombol Esc — semuanya langsung hilang. Pilihan "Besok lagi" / "Matikan
+// total" tersimpan di tuton_profile.creatorAds. credit: zerotime.web.id
+async function paintCreator(slot) {
+  if (slot) slot.innerHTML = ''; // slot banner lama tidak dipakai lagi
+  try {
+    const pref = await creatorPref();
+    if (pref.off || Date.now() < (pref.hideUntil || 0)) return;
+    if (document.getElementById('creator-modal')) return; // jangan dobel
+    const m = document.createElement('div');
+    m.id = 'creator-modal';
+    m.setAttribute('role', 'dialog');
+    m.setAttribute('aria-label', 'Dukung creator');
+    m.innerHTML = `<div class="creator-backdrop"></div>
+    <div class="creator-popup">
+      <button class="creator-xbig" title="Tutup (Esc)">✕</button>
+      <div class="eyebrow">DUKUNG CREATOR ☕</div>
+      <h3>Dukung Tuton OS</h3>
+      <p class="tiny">Scan QRIS ini dari e-wallet / m-banking apa pun buat traktir kopi — biar update terus.</p>
+      <img class="creator-qr" src="../assets/qris.png" alt="QRIS dukung creator">
+      <div class="tiny dim">QRIS a.n. fadilismee · dibuat oleh zerotime.web.id</div>
+      <div class="creator-row">
+        <button class="btn sm ghost" data-snooze>Besok lagi</button>
+        <button class="btn sm ghost" data-off>Matikan</button>
+      </div>
+    </div>`;
+    document.body.appendChild(m);
+    const close = async (snooze) => {
+      if (snooze) await setCreatorPref({ hideUntil: Date.now() + 864e5 });
+      m.remove();
+    };
+    m.querySelector('.creator-xbig').addEventListener('click', () => { close(true); notify('Siap, ditutup 🙏'); });
+    m.querySelector('.creator-backdrop').addEventListener('click', () => close(true));
+    m.querySelector('[data-snooze]').addEventListener('click', async () => { await close(true); notify('Oke, besok lagi ya 🙏'); });
+    m.querySelector('[data-off]').addEventListener('click', async () => {
+      if (!confirm('Matikan popup dukung creator selamanya? (bisa dinyalakan lagi di Setting)')) return;
+      await setCreatorPref({ off: true });
+      m.remove();
+    });
+    const onKey = (e) => {
+      if (e.key === 'Escape') { close(true); document.removeEventListener('keydown', onKey); }
+    };
+    document.addEventListener('keydown', onKey);
+  } catch { /* popup best-effort, jangan rusak dashboard */ }
+}
 
 async function creatorPref() {
   try {
@@ -435,39 +473,6 @@ async function setCreatorPref(patch) {
     const p = (await load('tuton_profile', {})) || {};
     await save('tuton_profile', { ...p, creatorAds: { off: false, hideUntil: 0, ...(p.creatorAds || {}), ...patch } });
   } catch { /* abaikan */ }
-}
-
-async function paintCreator(slot) {
-  if (!slot) return;
-  try {
-    const pref = await creatorPref();
-    if (pref.off || Date.now() < (pref.hideUntil || 0)) { slot.innerHTML = ''; return; }
-    const ad = CREATOR_ADS[Math.floor(Date.now() / 864e5) % CREATOR_ADS.length];
-    slot.innerHTML = `<div class="creator-ad" role="complementary" aria-label="Dukung creator">
-      <button class="creator-x" title="Tutup iklan">✕</button>
-      <div class="creator-body"><b>${escapeHtml(ad.title)}</b><span>${escapeHtml(ad.desc)}</span></div>
-      <div class="creator-row">
-        <a class="btn sm primary creator-go" href="${escapeHtml(ad.url)}" target="_blank" rel="noopener">${escapeHtml(ad.cta)}</a>
-        <button class="btn sm ghost" data-snooze>Besok lagi</button>
-        <button class="btn sm ghost" data-off>Matikan</button>
-      </div>
-    </div>`;
-    slot.querySelector('.creator-x').addEventListener('click', async () => {
-      await setCreatorPref({ hideUntil: Date.now() + 864e5 });
-      slot.innerHTML = '';
-      notify('Iklan disembunyikan sampai besok');
-    });
-    slot.querySelector('[data-snooze]').addEventListener('click', async () => {
-      await setCreatorPref({ hideUntil: Date.now() + 864e5 });
-      slot.innerHTML = '';
-      notify('Oke, besok lagi ya 🙏');
-    });
-    slot.querySelector('[data-off]').addEventListener('click', async () => {
-      if (!confirm('Matikan banner dukung creator selamanya? (bisa dinyalakan lagi di Setting)')) return;
-      await setCreatorPref({ off: true });
-      slot.innerHTML = '';
-    });
-  } catch { /* banner best-effort, jangan rusak dashboard */ }
 }
 
 // Tooltip custom gelap untuk sel heatmap: instan, ngikutin kursor,

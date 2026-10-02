@@ -255,14 +255,14 @@ body.qfocus .content { max-width: 780px; margin: 0 auto; width: 100%; padding-bo
 #content.qfocus-on > .row { display: none !important; }
 body.qfocus .qexam-q { font-size: 14.5px; }
 body.qfocus .qexam-q .q-title { font-size: 15.5px; }
-/* ---------- Dukung creator: 1 banner, gampang close, tanpa tracker ---------- */
-.creator-ad { position: relative; border: 1px dashed var(--line2); border-radius: 12px; padding: 10px 12px; margin: 10px 0 4px; background: var(--bg1); animation: popIn .25s ease both; }
-.creator-body { display: flex; flex-direction: column; gap: 2px; padding-right: 26px; font-size: 12.5px; }
-.creator-body span { color: var(--mut); font-size: 11.5px; }
-.creator-row { display: flex; gap: 6px; margin-top: 8px; align-items: center; }
-.creator-x { position: absolute; top: 6px; right: 6px; width: 24px; height: 24px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: var(--mut); cursor: pointer; font-size: 12px; line-height: 1; }
-.creator-x:hover { color: #ff7b7b; border-color: rgba(255,123,123,.5); }
-a.creator-go { text-decoration: none; }
+/* ---------- Dukung creator: POPUP QRIS full, gampang close ---------- */
+#creator-modal { position: fixed; inset: 0; z-index: 9999; display: flex; align-items: center; justify-content: center; padding: 18px; animation: popIn .2s ease both; }
+.creator-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.72); }
+.creator-popup { position: relative; width: min(360px, 92vw); background: var(--bg1); border: 1px solid var(--line2); border-radius: 16px; padding: 20px 18px 16px; text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
+.creator-popup h3 { font-size: 17px; margin: 6px 0 4px; }
+.creator-qr { width: min(240px, 64vw); height: auto; border-radius: 12px; border: 1px solid var(--line2); background: #fff; margin: 10px auto 6px; display: block; }
+.creator-xbig { position: absolute; top: 8px; right: 8px; width: 32px; height: 32px; border-radius: 10px; border: 1px solid var(--line2); background: var(--bg2); color: var(--txt); cursor: pointer; font-size: 15px; line-height: 1; }
+.creator-xbig:hover { color: #ff7b7b; border-color: rgba(255,123,123,.6); }
 /* ---------- Heatmap (GitHub-style) ---------- */
 .cal-wrap { overflow-x: auto; padding: 4px 0 2px; }
 .cal { display: flex; gap: 3px; }
