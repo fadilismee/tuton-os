@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Tuton OS",
-  "version": "0.1.0",
-  "description": "Asisten akademik lokal-first untuk mahasiswa UT: IPK, simulasi, tracker, bank soal, AI tutor, PDF tools.",
+  "version": "0.1.1",
+  "description": "Asisten akademik lokal-first mahasiswa UT: IPK, bank soal, AI tutor, export DOCX ber-rumus, BMP Studio, PDF tools.",
   "permissions": [
     "storage",
     "sidePanel",
@@ -41,8 +41,12 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["src/bmp/vendor/pdfjs-umd/*"],
-      "matches": ["<all_urls>"]
+      "resources": [
+        "src/bmp/vendor/pdfjs-umd/*"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
     }
   ],
   "icons": {
