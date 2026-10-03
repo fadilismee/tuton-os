@@ -105,7 +105,11 @@ function currentRoute() {
 async function applyTheme() {
   try {
     const p = (await load('tuton_profile', {})) || {};
-    document.body.classList.toggle('light', (p.theme || 'dark') === 'light');
+    const isLight = (p.theme || 'dark') === 'light';
+    document.body.classList.toggle('light', isLight);
+    // color-scheme ikut tema supaya kontrol bawaan browser (scrollbar, select,
+    // date picker) tidak berwarna gelap saat memakai tema putih.
+    document.documentElement.style.colorScheme = isLight ? 'light' : 'dark';
   } catch { /* abaikan */ }
 }
 
@@ -221,6 +225,7 @@ function heatmapYearHTML(days, year) {
   const start = new Date(jan1);
   start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
   const weeks = Math.ceil((((last - start) / 864e5) + 1) / 7);
+  let lastLabelW = -4;   // posisi kolom label bulan terakhir
   for (let w = 0; w < weeks; w++) {
     let cells = '', colMonth = '';
     for (let d = 0; d < 7; d++) {
@@ -233,10 +238,13 @@ function heatmapYearHTML(days, year) {
       const ghost = !inRange ? ' ghost' : '';
       const iso = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
       cells += `<span class="cal-cell${s ? ' l' + levelOf(s) : ''}${ghost}"${inRange ? ` data-tip="${tip}" data-date="${iso}" data-n="${s}"` : ''}></span>`;
-      if (d === 0 && date.getFullYear() === year && date.getMonth() !== lastMonth && date <= last) { colMonth = MONTHS[date.getMonth()]; lastMonth = date.getMonth(); }
+      // Label bulan hanya tiap >= 4 minggu supaya tidak saling menumpuk.
+      if (d === 0 && date.getFullYear() === year && date.getMonth() !== lastMonth && date <= last && (w - lastLabelW) >= 4) {
+        colMonth = MONTHS[date.getMonth()]; lastMonth = date.getMonth(); lastLabelW = w;
+      }
     }
     cols += `<div class="cal-col">${cells}</div>`;
-    months += `<span style="width:14px">${colMonth}</span>`;
+    months += `<span class="cal-m">${colMonth}</span>`;
   }
   const endNote = isCurYear ? ` · s/d ${today.getDate()} ${MONTHS[today.getMonth()]}` : '';
   return { html: `<div class="cal-wrap"><div class="cal-months">${months}</div><div class="cal">${cols}</div><div class="cal-legend">Less <span class="cal-cell"></span><span class="cal-cell l1"></span><span class="cal-cell l2"></span><span class="cal-cell l3"></span><span class="cal-cell l4"></span> More</div></div>`, total, endNote };

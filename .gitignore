@@ -6,3 +6,5 @@ out-export/
 *.log
 .DS_Store
 Thumbs.db
+out-ui/
+audit-*.json
