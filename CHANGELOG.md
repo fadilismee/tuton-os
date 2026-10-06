@@ -4,6 +4,20 @@ Semua perubahan penting proyek ini dicatat di sini.
 Format mengikuti [Keep a Changelog](https://keepachangelog.com/id/1.1.0/)
 dan versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 
+## [0.1.2] — 2026-10-06
+
+Rilis kecil supaya hasil unduh dari GitHub benar-benar rapi dan siap dipasang.
+
+### Diperbaiki
+- **Icon extension asli** (16/48/128 px) — sebelumnya placeholder 1×1 transparan
+  sehingga Chrome menampilkan ikon puzzle default di toolbar; kini monogram "T"
+  neon di kotak gelap sesuai tema app.
+- Versi icon sinkron di `manifest.json` dan `package.json` (0.1.2).
+
+### Diubah
+- README: peringatan jelas bahwa **file `.zip` harus diekstrak dulu** sebelum
+  Load unpacked — men-drag zip langsung ke `chrome://extensions` tidak berfungsi.
+
 ## [0.1.1] — 2026-10-03
 
 Rilis ini fokus pada **kualitas dokumen jawaban** dan **kerapian tampilan**,
@@ -73,5 +87,6 @@ Rilis pertama.
 - **Runtime lokal opsional** (Node, port 3721): baca PDF besar + konversi
   Word → PDF via Microsoft Word/LibreOffice.
 
+[0.1.2]: https://github.com/fadilismee/tuton-os/releases/tag/v0.1.2
 [0.1.1]: https://github.com/fadilismee/tuton-os/releases/tag/v0.1.1
 [0.1.0]: https://github.com/fadilismee/tuton-os/releases/tag/v0.1.0

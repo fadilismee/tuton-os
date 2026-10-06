@@ -3,7 +3,7 @@
 **Asisten akademik lokal-first untuk mahasiswa Universitas Terbuka (UT).**
 Extension Chrome/Edge — gratis, opensource, datanya tinggal di perangkatmu.
 
-[![Rilis](https://img.shields.io/badge/rilis-v0.1.1-00e68a?style=flat-square)](https://github.com/fadilismee/tuton-os/releases)
+[![Rilis](https://img.shields.io/badge/rilis-v0.1.2-00e68a?style=flat-square)](https://github.com/fadilismee/tuton-os/releases)
 [![Lisensi](https://img.shields.io/badge/lisensi-GPL--3.0-8fb8ff?style=flat-square)](LICENSE)
 [![Manifest](https://img.shields.io/badge/Manifest-V3-9aa3ab?style=flat-square)](manifest.json)
 [![Platform](https://img.shields.io/badge/platform-Chrome%20%7C%20Edge%20desktop-9aa3ab?style=flat-square)](#batasan)
@@ -42,10 +42,13 @@ Perbandingan penuh: [`docs/screenshots/tema-gelap-terang.jpg`](docs/screenshots/
 
 ## Unduh
 
-**[⬇️ tuton-os-v0.1.1.zip](https://github.com/fadilismee/tuton-os/releases/download/v0.1.1/tuton-os-v0.1.1.zip)**
+**[⬇️ tuton-os-v0.1.2.zip](https://github.com/fadilismee/tuton-os/releases/download/v0.1.2/tuton-os-v0.1.2.zip)**
 
 Setelah unduh: **ekstrak** → `chrome://extensions` → nyalakan **Developer mode**
 → **Load unpacked** → pilih folder hasil ekstrak.
+
+> Jangan men-drag file `.zip` langsung ke halaman `chrome://extensions` —
+> itu tidak pernah diproses. Ekstrak dulu sampai kamu melihat `manifest.json`.
 
 Semua versi ada di halaman [Releases](https://github.com/fadilismee/tuton-os/releases);
 perubahan tiap versi di [CHANGELOG.md](CHANGELOG.md).

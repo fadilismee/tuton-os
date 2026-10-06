@@ -1,7 +1,7 @@
 {
   "type": "module",
   "name": "tuton-os",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Tuton OS — extension lokal-first + router lokal (tanpa Vercel/GitHub/Supabase).",
   "scripts": {
     "router": "node router/server.js",
