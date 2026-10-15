@@ -4,6 +4,34 @@ Semua perubahan penting proyek ini dicatat di sini.
 Format mengikuti [Keep a Changelog](https://keepachangelog.com/id/1.1.0/)
 dan versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 
+## [0.1.5] — 2026-10-15
+
+Modul yang viewernya **flipbook** (tidak bisa di-scroll) akhirnya bisa diunduh —
+ini penyebab "beberapa modul tidak bisa, yang lain aman".
+
+### Diperbaiki
+- **Modul dengan viewer flipbook/zine (mis. EKMA4316) tidak lagi gagal.** Pada
+  modul seperti ini FlowPaper merender halaman sebagai `background-image` pada
+  `div#pageContainer_N_documentViewer`, containernya tidak bisa di-scroll
+  (`scrollHeight == clientHeight`), dan hampir tidak ada `<img>` halaman. Panen
+  berbasis scroll hanya melihat 1–4 halaman yang tampil lalu macet di halaman
+  berikutnya. Sekarang extension mengenali mode tersebut dan **memajukan viewer
+  lewat tombol maju miliknya sendiri**, satu halaman per satu waktu dengan jeda
+  seperti manusia, sambil memanen tiap bentangan yang muncul. Berlaku untuk
+  mode Cepat, Biasa, dan Panen.
+
+### Catatan teknis (penting, terverifikasi)
+- **Jangan minta halaman langsung ke `view.php` dari skrip.** Sempat dicoba dan
+  sempat berhasil (37 halaman EKMA4316 M1, ±69 detik) — tetapi setelah ±50
+  permintaan beruntun, Imperva menandai kliennya dan SELURUH reader (termasuk
+  halaman HTML-nya) dijawab `Request Rejected` sampai beberapa lama. Jadi jalur
+  itu dibuang total: semua permintaan gambar harus datang dari viewer sendiri.
+
+### Ditambahkan
+- Uji regresi `scripts/bmp-flipbook.test.mjs` (8 pemeriksaan): viewer flipbook
+  37 halaman harus selesai lengkap, dan **tidak boleh ada satu pun permintaan
+  halaman yang belum dimuat viewer** (syarat anti-blokir).
+
 ## [0.1.4] — 2026-10-15
 
 Unduhan BMP tidak lagi gagal total saat jaringan jelek di tengah jalan.
@@ -153,6 +181,7 @@ Rilis pertama.
 - **Runtime lokal opsional** (Node, port 3721): baca PDF besar + konversi
   Word → PDF via Microsoft Word/LibreOffice.
 
+[0.1.5]: https://github.com/fadilismee/tuton-os/releases/tag/v0.1.5
 [0.1.4]: https://github.com/fadilismee/tuton-os/releases/tag/v0.1.4
 [0.1.3]: https://github.com/fadilismee/tuton-os/releases/tag/v0.1.3
 [0.1.2]: https://github.com/fadilismee/tuton-os/releases/tag/v0.1.2

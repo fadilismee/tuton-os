@@ -2218,19 +2218,29 @@ function ensureBmpListener() {
             + (msg.pages?.length ? ` — [${msg.pages.join(', ')}]` : '')
             + (msg.hint === 'scroll' ? ' · scroll pelan...' : '');
         }
-        if (msg.hint === 'scroll') {
+        if (msg.hint === 'flip') {
+          rbvStage(`M<b>${msg.module}</b>: <b>${msg.count}${msg.totalPages ? '/' + msg.totalPages : ''}</b> halaman terekam — memajukan viewer…`);
+        } else if (msg.hint === 'scroll') {
           rbvStage(`M<b>${msg.module}</b>: <b>${msg.count}${msg.totalPages ? '/' + msg.totalPages : ''}</b> halaman terekam. Scroll pelan di tab reader supaya halaman berikutnya ikut termuat.`);
         } else {
           rbvStage(`M<b>${msg.module}</b>: merekam — <b>${msg.count}${msg.totalPages ? '/' + msg.totalPages : ''}</b> halaman.`);
         }
         if (msg.totalPages) rbvBar('rbv-bar', (msg.count / msg.totalPages) * 100);
+      } else if (msg.type === 'TUTON_BMP_FLIP') {
+        // Viewer tidak bisa di-scroll (flipbook/zine): halaman dimajukan lewat
+        // tombol next milik viewer, satu halaman per satu waktu.
+        run.flipMode = true;
+        rbvLog(`M${msg.module}: viewer bertipe flipbook — dimajukan satu halaman per satu waktu.`);
       } else if (msg.type === 'TUTON_BMP_PROGRESS') {
         const md = rbvMod(run.code, msg.module);
         if (md) { md.state = 'fetch'; md.page = msg.page; md.total = msg.totalPages || md.total; paintRbvMods(); }
-        if (msg.hint === 'scroll') {
-          rbvStage(`Modul <b>${msg.module}</b>: menunggu halaman <b>${msg.page}${msg.totalPages ? '/' + msg.totalPages : ''}</b> — <b>scroll manual pelan</b> di tab reader sampai gambarnya tampil.`);
+        const pg = `${msg.page}${msg.totalPages ? '/' + msg.totalPages : ''}`;
+        if (msg.flip) {
+          rbvStage(`Modul <b>${msg.module}</b>: memajukan viewer ke halaman berikutnya (h<b>${pg}</b>) — mode flipbook, tanpa scroll${msg.retry ? ' — ulangan' : ''}…`);
+        } else if (msg.hint === 'scroll') {
+          rbvStage(`Modul <b>${msg.module}</b>: menunggu halaman <b>${pg}</b> — <b>scroll manual pelan</b> di tab reader sampai gambarnya tampil.`);
         } else {
-          rbvStage(`Modul <b>${msg.module}</b>: menunggu halaman <b>${msg.page}${msg.totalPages ? '/' + msg.totalPages : ''}</b> termuat di viewer (scroll manual pelan bila diam).`);
+          rbvStage(`Modul <b>${msg.module}</b>: menunggu halaman <b>${pg}</b> termuat di viewer (scroll manual pelan bila diam).`);
         }
         if (msg.totalPages) rbvBar('rbv-bar', ((msg.page - 1) / msg.totalPages) * 100);
       } else if (msg.type === 'TUTON_BMP_PAGE') {
@@ -2446,6 +2456,7 @@ function vBmp() {
       <div class="tiny" style="margin-top:10px;line-height:1.5">
         <b>Cepat (default):</b> extension otomatis memuat tiap halaman lalu mengunduh semua modul dalam rentang. <b>Biasa:</b> ritme lama satu halaman per satu waktu.
         Kalau jaringan jelek dan ada halaman yang macet, halaman itu <b>dilewati dulu</b> (unduhan tidak gagal total) — sisanya tetap masuk, dan yang bolong disusul lewat <b>Lanjutkan yang belum</b> tanpa mengulang halaman yang sudah ada.
+        Untuk modul yang viewernya bertipe <b>flipbook</b> (tidak bisa di-scroll, mis. EKMA4316), halaman dimajukan sendiri lewat tombol maju viewer — satu halaman per satu waktu.
       </div>
       <div class="row" style="margin-top:8px">
         <button class="btn primary" id="rbv-auto" style="flex:1">${icon('download', 14)}Unduh otomatis</button>

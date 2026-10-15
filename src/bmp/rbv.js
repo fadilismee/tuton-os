@@ -143,6 +143,49 @@
   // Kontainer scroll vertikal FlowPaper: [id^="pagesContainer"].
   // (Dipakai hanya untuk baca posisi — scraper TIDAK pernah scroll.)
 
+  // ---- CATATAN PENTING (Okt 2026, terverifikasi): JANGAN minta halaman
+  // langsung ke view.php dari skrip ----
+  //
+  // Sempat terlihat menjanjikan: 37 halaman EKMA4316 M1 berhasil ditarik dengan
+  // `new Image()` memakai pola URL milik viewer. Tapi setelah ±50 permintaan
+  // beruntun, Imperva menandai klien ini dan SELURUH reader (termasuk halaman
+  // HTML-nya) dijawab "Request Rejected" — sesi ikut kena. Jadi jalur minta
+  // halaman langsung = footgun: cepat, tapi mematikan sesi user.
+  //
+  // Aturan yang dipakai: SEMUA permintaan halaman harus datang dari viewer
+  // sendiri (scroll atau tombol next miliknya), satu halaman per satu waktu,
+  // dengan jeda seperti manusia. Itu juga satu-satunya cara yang sah.
+  //
+  // Konsekuensi untuk modul bertipe flipbook/zine (mis. EKMA4316): halaman
+  // dirender sebagai background-image dan containernya TIDAK bisa di-scroll,
+  // jadi halaman dimajukan lewat tombol next viewer (lihat flipNextPage).
+  // Viewer flipbook? (tidak ada kontainer yang bisa di-scroll)
+  function isFlipbook() {
+    const conts = [...document.querySelectorAll('[id^="pagesContainer"]')].filter((e) => e.offsetWidth || e.offsetHeight);
+    if (!conts.length) return false;
+    return !conts.some((e) => e.scrollHeight > e.clientHeight + 8);
+  }
+
+  function nextButton() {
+    return [...document.querySelectorAll('[class*="flowpaper_next"],[class*="bttnNextPage"]')]
+      .find((e) => e.offsetParent && !e.id) || null;
+  }
+
+  // Majukan viewer satu halaman (dipakai viewer flipbook yang tidak bisa
+  // di-scroll). Diberi jeda supaya ritmenya seperti orang membaca.
+  async function flipNextPage() {
+    const btn = nextButton();
+    if (!btn) return false;
+    const wait = 2200 + Math.floor(Math.random() * 900);
+    if (Date.now() - (flipNextPage._t || 0) < wait) {
+      await sleep(Math.max(0, wait - (Date.now() - (flipNextPage._t || 0))));
+    }
+    flipNextPage._t = Date.now();
+    try { btn.click(); } catch (_) { return false; }
+    await sleep(900);
+    return true;
+  }
+
   // Semua gambar halaman (view.php) yang SUDAH dimuat viewer.
   // Tahan beda urutan parameter: doc & page dibaca via regex, bukan includes('&').
   // Mendukung dua bentuk render FlowPaper: <img src=view.php> dan
@@ -240,10 +283,11 @@
   function nudgeScroll() {
     if (!autoScroll) return;
     const cont = document.querySelector('[id^="pagesContainer"]');
-    if (!cont) return;
+    if (!cont) { flipNextPage(); return; }
     if (Date.now() - lastAutoScrollAt < 3500) return;
     lastAutoScrollAt = Date.now();
     const max = Math.max(0, cont.scrollHeight - cont.clientHeight);
+    if (max < 8) { flipNextPage(); return; }   // viewer flipbook: majukan lewat tombol next
     if (cont.scrollTop >= max - 6) return;
     cont.scrollTop = Math.min(max, cont.scrollTop + 430);
   }
@@ -359,6 +403,45 @@
     let downloaded = harvestedPages.size;
     let lastNewAt = Date.now();
     let warned = false;
+
+    // Mode Panen pada viewer flipbook: menunggu saja tidak akan memuat halaman
+    // baru, jadi viewer dimajukan lewat tombol next miliknya (satu halaman per
+    // satu waktu). Semua permintaan gambar tetap datang dari viewer sendiri.
+    if (finitePass && isFlipbook()) {
+      let noNew = 0;
+      let lastSize = harvestedPages.size;
+      const batas = 240;
+      for (let i = 0; i < batas; i++) {
+        if (!stillActive()) return;
+        if (pageRejected()) { finish('blocked', { reason: 'Request Rejected muncul saat memajukan viewer.' }); return; }
+        if (passwordVisible()) { finish('login_required', { reason: 'Sesi butuh login ulang.' }); return; }
+        const fresh = loadedModuleImages(module).filter((x) => !harvestedPages.has(x.page));
+        for (const src of fresh) {
+          if (!stillActive()) return;
+          let dataUrl = null;
+          try { dataUrl = await grabPageDataUrl(src); } catch (_) { dataUrl = null; }
+          if (!dataUrl) continue;
+          post({ type: 'TUTON_BMP_PAGE', runId, module, page: src.page, dataUrl });
+          const acked = await waitPageAck(src.page);
+          if (!acked || !stillActive()) return;
+          harvestedPages.add(src.page);
+          downloaded++;
+        }
+        const det = detectTotalPages(500);
+        const total = det?.pages || null;
+        post({ type: 'TUTON_BMP_HARVEST_STATUS', runId, module,
+          count: downloaded, totalPages: total, pages: [...harvestedPages].sort((a, b) => a - b), hint: 'flip' });
+        if (total && downloaded >= total) { finish('caught', { totalPages: total }); return; }
+        const moved = await flipNextPage();
+        if (!moved) { finish('caught', { totalPages: total, reason: 'Tombol maju viewer tidak ditemukan.' }); return; }
+        await sleep(700);
+        if (harvestedPages.size === lastSize) noNew++;
+        else { noNew = 0; lastSize = harvestedPages.size; }
+        if (noNew >= 4) { finish('caught', { totalPages: total, reason: 'Berhenti: viewer mentok (4x maju tanpa halaman baru).' }); return; }
+      }
+      finish('caught', { totalPages: detectTotalPages(500)?.pages || null, reason: 'Batas maju viewer tercapai.' });
+      return;
+    }
 
     for (;;) {
       if (!stillActive()) return;
@@ -536,6 +619,39 @@
     let consecStall = 0;
     let networkDead = false;
 
+    // ---- Viewer flipbook (tidak bisa di-scroll): majukan lewat tombol next ----
+    // Satu halaman per satu waktu dengan jeda seperti manusia, sambil memanen
+    // setiap halaman yang muncul. Tidak ada permintaan halaman dari skrip:
+    // semua gambar tetap dipicu viewer sendiri (syarat supaya WAF tidak marah).
+    if (isFlipbook()) {
+      post({ type: 'TUTON_BMP_FLIP', runId, module, active: true });
+      let noNew = 0;
+      let lastSize = harvestedPages.size;
+      const maxFlips = totalPages * 2 + 8;
+      for (let i = 0; i < maxFlips; i++) {
+        if (!stillActive()) return;
+        if (pageRejected()) { finish('blocked', { reason: 'Request Rejected muncul saat memajukan viewer.' }); return; }
+        if (passwordVisible()) { finish('login_required', { reason: 'Sesi butuh login ulang.' }); return; }
+        await harvest();
+        const sisa = missingFrom();
+        if (!sisa.length) { finish('complete', { page: 0 }); return; }
+        post({ type: 'TUTON_BMP_PROGRESS', runId, module, page: sisa[0], totalPages, flip: true });
+        const moved = await flipNextPage();
+        if (!moved) { finish('incomplete', { page: sisa[0], reason: 'Tombol maju viewer tidak ditemukan — viewer mungkin sedang tidak terbuka.' }); return; }
+        await sleep(700);
+        await harvest();
+        if (harvestedPages.size === lastSize) noNew++;
+        else { noNew = 0; lastSize = harvestedPages.size; }
+        if (noNew >= 4) break;              // 4x maju tanpa halaman baru → mentok
+        if (Date.now() > deadline) break;
+        if (consecStall >= MAX_CONSEC_STALL) break;
+      }
+      const sisa = missingFrom();
+      if (!sisa.length) { finish('complete', { page: 0 }); return; }
+      finish('incomplete', { page: sisa[0], reason: `${sisa.length} halaman belum berhasil dimuat (viewer mentok / jaringan). Sisa: ${sisa.slice(0, 12).join(', ')}. Hasil yang sudah ada tetap tersimpan.` });
+      return;
+    }
+
     // PASS 1 — sapu semua halaman yang belum. Halaman yang macet (jaringan
     // jelek, gambar tak kunjung termuat) DILEWATI, bukan mematikan modul:
     // sisanya tetap diunduh, dan halaman yang dilewati disusulkan di pass 2
@@ -545,6 +661,8 @@
       if (!stillActive()) return;
       if (harvestedPages.has(p)) continue;
       post({ type: 'TUTON_BMP_PROGRESS', runId, module, page: p, totalPages });
+      await harvest();
+      if (harvestedPages.has(p)) { consecStall = 0; continue; }
       const r = await waitTarget(p, STALL_MS);
       if (r === 'stop') return;
       if (r === 'blocked') { finish('blocked', { page: p, reason: 'Request Rejected muncul saat mengunduh.' }); return; }
@@ -570,6 +688,8 @@
         if (!stillActive()) return;
         if (harvestedPages.has(p)) continue;
         post({ type: 'TUTON_BMP_PROGRESS', runId, module, page: p, totalPages, retry: true });
+        await harvest();
+        if (harvestedPages.has(p)) { consecStall = 0; continue; }
         const r = await waitTarget(p, STALL_RETRY_MS);
         if (r === 'stop') return;
         if (r === 'blocked') { finish('blocked', { page: p, reason: 'Request Rejected muncul saat mengunduh.' }); return; }
