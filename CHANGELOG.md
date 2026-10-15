@@ -4,6 +4,28 @@ Semua perubahan penting proyek ini dicatat di sini.
 Format mengikuti [Keep a Changelog](https://keepachangelog.com/id/1.1.0/)
 dan versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 
+## [0.1.6] — 2026-10-15
+
+Sesi yang mati di tengah unduhan tidak lagi menghapus pekerjaan.
+
+### Diperbaiki
+- **Sesi habis / ditolak server tidak lagi mematikan job tanpa hasil.** Dulu
+  kondisi ini langsung menghentikan semuanya dan hasil sebelumnya dibuang. Kini
+  halaman yang sudah tersimpan tetap dirakit menjadi **PDF parsial** dan
+  diunduh, halaman bolong dicatat, lalu panel menampilkan <b>LOGIN ULANG</b>
+  (atau <b>DIBLOKIR</b>) dengan arahan: login lagi di tab reader, lalu klik
+  **Lanjutkan yang belum** — halaman yang sudah ada tidak diunduh ulang.
+
+### Catatan (hasil diagnosa lapangan)
+- Blokir "Request Rejected" dari Imperva menempel pada **kombinasi profil klien
+  + IP**, dan bisa hilang sendiri setelah beberapa lama. Terverifikasi: dari IP
+  rumah yang sama, Chrome dengan profil bersih kembali bisa membuka reader tanpa
+  VPN — jadi IP-nya tidak diblokir permanen.
+- Kalau reader dipakai lewat VPN, sesi mudah putus: sesi reader terikat pada IP,
+  dan VPN yang berpindah node membuat sesi dianggap tidak sah (terlihat sebagai
+  "logout otomatis" saat unduhan berjalan beberapa menit). Kalau IP rumah sudah
+  bisa, pakai koneksi itu tanpa VPN.
+
 ## [0.1.5] — 2026-10-15
 
 Modul yang viewernya **flipbook** (tidak bisa di-scroll) akhirnya bisa diunduh —
@@ -181,6 +203,7 @@ Rilis pertama.
 - **Runtime lokal opsional** (Node, port 3721): baca PDF besar + konversi
   Word → PDF via Microsoft Word/LibreOffice.
 
+[0.1.6]: https://github.com/fadilismee/tuton-os/releases/tag/v0.1.6
 [0.1.5]: https://github.com/fadilismee/tuton-os/releases/tag/v0.1.5
 [0.1.4]: https://github.com/fadilismee/tuton-os/releases/tag/v0.1.4
 [0.1.3]: https://github.com/fadilismee/tuton-os/releases/tag/v0.1.3

@@ -2425,6 +2425,23 @@ function ensureBmpListener() {
             paintRbvCache();
             return;
           }
+          // Sesi mati / diblokir: JANGAN buang hasil yang sudah ada dan jangan
+          // matikan job begitu saja — simpan parsial, catat halaman bolong,
+          // lalu berhenti dengan pesan "login lagi, klik Lanjutkan yang belum".
+          // Halaman yang sudah tersimpan tidak akan diunduh ulang.
+          if (msg.result === 'login_required' || msg.result === 'blocked') {
+            const have = await rbvKeepPartial(run, msg.module, msg.totalPages || md?.total || 0, msg.missing || []);
+            if (md) { md.pages = have.length; paintRbvMods(); }
+            bmpRun = null;
+            rbvPill('stop', msg.result === 'login_required' ? 'LOGIN ULANG' : 'DIBLOKIR');
+            rbvStage(`Modul <b>${msg.module}</b>: <b>${escapeHtml(label)}</b>${msg.reason ? ' — ' + escapeHtml(msg.reason) : ''}.`
+              + ` <b>${have.length}</b> halaman sudah tersimpan (PDF parsial terunduh).`
+              + ` Buka tab reader, <b>login lagi</b>, lalu klik <b>Lanjutkan yang belum</b> — halaman yang sudah ada tidak diulang.`);
+            rbvLog(`M${msg.module}: ${label} — ${have.length} hal tersimpan, menunggu login.`);
+            notify(msg.result === 'login_required' ? 'Sesi habis — login lagi lalu klik Lanjutkan yang belum.' : 'Server menolak — tunggu sebentar, lalu klik Lanjutkan yang belum.', 'error');
+            paintRbvCache();
+            return;
+          }
           rbvPill('error', 'BERHENTI');
           rbvStage(`Modul <b>${msg.module}</b>: ${escapeHtml(label)}${msg.reason ? ' — ' + escapeHtml(msg.reason) : ''}`);
           rbvLog(`M${msg.module}: ${label}${msg.reason ? ' — ' + msg.reason : ''}`);

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Tuton OS",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Asisten akademik lokal-first mahasiswa UT: IPK, bank soal, AI tutor, export DOCX ber-rumus, BMP Studio, PDF tools.",
   "permissions": [
     "storage",
