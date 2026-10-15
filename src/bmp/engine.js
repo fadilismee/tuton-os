@@ -17,6 +17,9 @@ let progressCb = null;
 // selesai agar ringkasan AI + generate soal bisa dipakai kapan saja.
 let currentTexts = [];
 let currentTextKey = null;
+// Nomor halaman yang sudah masuk ke `currentPdf` sesi ini (OCR langsung atau
+// hasil sambung dari simpanan bertahap) — mencegah halaman dobel.
+let pagesInPdf = new Set();
 
 function libs() {
   const T = globalThis.Tesseract;
@@ -114,6 +117,70 @@ export async function dbClearCode(code) {
   });
 }
 
+// ---------- Penyimpanan halaman bertahap ----------
+// Panen bisa terputus (sesi reset, sidepanel ditutup, modul belum tuntas).
+// Tiap halaman yang berhasil di-OCR langsung disimpan sebagai PDF satu
+// halaman, sehingga pekerjaan tidak pernah hilang dan panen bisa dilanjutkan
+// kapan saja. Kunci diawali `staged:` supaya tidak bentrok dengan kunci modul
+// (`CODE:M3`) yang dipakai dbListModules.
+function stagedPrefix(code, moduleNo) {
+  return `staged:${String(code).toUpperCase()}:M${Number(moduleNo)}:`;
+}
+function stagedKey(code, moduleNo, pageNo) {
+  return `${stagedPrefix(code, moduleNo)}${Number(pageNo)}`;
+}
+async function dbKeysWithPrefix(prefix) {
+  const db = await dbOpen();
+  return new Promise((resolve, reject) => {
+    const out = [];
+    const tx = db.transaction('pdfs', 'readonly');
+    tx.objectStore('pdfs').openKeyCursor().onsuccess = (ev) => {
+      const cur = ev.target.result;
+      if (!cur) return;
+      const k = String(cur.key || '');
+      if (k.startsWith(prefix)) out.push(k);
+      cur.continue();
+    };
+    tx.oncomplete = () => { db.close(); resolve(out); };
+    tx.onerror = () => { const e = tx.error; db.close(); reject(e); };
+  });
+}
+export async function stagedPages(code, moduleNo) {
+  const keys = await dbKeysWithPrefix(stagedPrefix(code, moduleNo));
+  return keys.map((k) => Number.parseInt(k.slice(stagedPrefix(code, moduleNo).length), 10))
+    .filter((n) => Number.isInteger(n) && n > 0).sort((a, b) => a - b);
+}
+export async function clearStaged(code, moduleNo) {
+  const keys = await dbKeysWithPrefix(stagedPrefix(code, moduleNo));
+  const db = await dbOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('pdfs', 'readwrite');
+    const store = tx.objectStore('pdfs');
+    for (const k of keys) store.delete(k);
+    tx.oncomplete = () => { db.close(); resolve(keys.length); };
+    tx.onerror = () => { const e = tx.error; db.close(); reject(e); };
+  });
+}
+// Sambungkan halaman bertahap yang BELUM ada di PDF sesi ini (pemulihan
+// setelah sesi terputus). Halaman yang sudah di-OCR sesi ini tidak diulang,
+// jadi tidak ada halaman dobel.
+async function appendMissingStaged(code, moduleNo) {
+  const { P } = libs();
+  const pages = await stagedPages(code, moduleNo);
+  let added = 0;
+  for (const p of pages) {
+    if (pagesInPdf.has(p)) continue;
+    const bytes = await dbGet(stagedKey(code, moduleNo, p));
+    if (!bytes) continue;
+    const doc = await P.PDFDocument.load(new Uint8Array(bytes));
+    const copied = await currentPdf.copyPages(doc, doc.getPageIndices());
+    copied.forEach((pg) => currentPdf.addPage(pg));
+    pagesInPdf.add(p);
+    added++;
+  }
+  return added;
+}
+
 // ---------- Job lifecycle ----------
 function ownsActivePdf(runId, key = currentModuleKey) {
   return Boolean(runId && runId === activeRunId && runId === currentPdfRunId && currentPdf && currentModuleKey === key);
@@ -133,6 +200,7 @@ export async function prepareJob(runId) {
   currentPdf = null;
   currentTexts = [];
   currentTextKey = null;
+  pagesInPdf = new Set();
   await ensureWorker();
 }
 export function cancelJob(runId) {
@@ -172,15 +240,22 @@ export async function ocrPage(code, moduleNo, pageNo, dataUrl, runId) {
   const pagePdf = await P.PDFDocument.load(new Uint8Array(res.data.pdf));
   const copied = await pdf.copyPages(pagePdf, pagePdf.getPageIndices());
   copied.forEach((p) => pdf.addPage(p));
+  pagesInPdf.add(Number(pageNo));
+  // Simpan halaman ini SEKARANG juga (PDF 1 halaman). Kalau sesi terputus di
+  // tengah jalan, halaman yang sudah selesai tidak perlu di-OCR ulang.
+  try { await dbPut(stagedKey(code, moduleNo, pageNo), res.data.pdf); } catch (_) {}
   const text = String(res?.data?.text || '').trim();
   if (currentTextKey === key) currentTexts[pageNo - 1] = text;
   return text;
 }
 
-export async function finishModule(code, moduleNo, pages, runId) {
+export async function finishModule(code, moduleNo, pages, runId, keepStaged = false) {
   const key = `${code}:M${moduleNo}`;
   if (!ownsActivePdf(runId, key)) throw new Error('Finalisasi dari proses lama.');
   const pdf = currentPdf;
+  // Halaman bertahap: PDF parsial dari sesi sebelumnya disambungkan lebih dulu,
+  // supaya hasil panen tidak hilang saat user menutup sidepanel / sesi reset.
+  await appendMissingStaged(code, moduleNo);
   if (pdf.getPageCount() !== Number(pages)) {
     throw new Error(`Halaman OCR (${pdf.getPageCount()}) tidak cocok dengan yang diunduh (${pages}). PDF tidak disimpan agar tidak terpotong.`);
   }
@@ -194,6 +269,9 @@ export async function finishModule(code, moduleNo, pages, runId) {
     await chrome.storage.local.set({ tuton_modtexts: all });
   } catch { /* teks best-effort; PDF tetap tersimpan */ }
   const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+  // Modul tuntas -> simpanan bertahap tidak diperlukan lagi. Bila belum
+  // lengkap (keepStaged), biarkan agar bisa dilanjutkan tanpa OCR ulang.
+  if (!keepStaged) { try { await clearStaged(code, moduleNo); } catch (_) {} }
   clearPdfOwnedBy(runId);
   return { blobUrl: url, bytes: bytes.length };
 }

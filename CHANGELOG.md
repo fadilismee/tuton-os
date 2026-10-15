@@ -4,6 +4,35 @@ Semua perubahan penting proyek ini dicatat di sini.
 Format mengikuti [Keep a Changelog](https://keepachangelog.com/id/1.1.0/)
 dan versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 
+## [0.1.3] — 2026-10-15
+
+BMP Studio (RBV reader pustaka.ut.ac.id) dirombak jadi **perekam pasif** — satu-satunya
+cara yang terbukti lolos WAF + sesi reader saat ini.
+
+### Ditambahkan
+- Alur **Mulai rekam → scroll pelan → Selesai & rakit PDF**; tiap halaman langsung
+  disimpan bertahap ke IndexedDB sehingga progres tidak hilang saat sesi putus dan
+  bisa dilanjutkan tanpa OCR ulang.
+- Halaman bolong dilaporkan eksplisit (`missing`) — PDF tidak pernah terpotong diam-diam.
+- Perbaikan guard idempoten `window.__TUTON_BMP__`: listener selalu dipasang ulang
+  (`removeListener` sebelum `addListener`) sehingga Reload extension cukup tanpa
+  menutup tab reader.
+
+### Diubah
+- Mode **Unduh otomatis (Cepat/Biasa)** tetap ada untuk rentang multi-modul; bila
+  reader mencurigai pola otomatis (reload viewer / sesi putus), pakai **Mulai rekam**
+  yang pasif dan aman.
+- Deteksi gambar tahan revisi situs: URL `view.php` diparse via regex (urutan
+  parameter apa pun) + dukungan render `background-image`, bukan hanya `<img>`.
+- Pesan gagal kini menyebut **modul mana yang sedang terbuka** bila tab salah modul.
+
+### Diperbaiki
+- Hasil panen 0 tanpa pesan error (penyebab: skrip lama di tab terbuka mengabaikan
+  pesan `TUTON_BMP_RECORD`).
+- Blokir WAF reader: `fetch()`/`<img>` langsung ke `view.php` selalu dijawab
+  HTTP 200 "Request Rejected" — kini hanya memanen `<img>` yang SUDAH dimuat
+  viewer FlowPaper.
+
 ## [0.1.2] — 2026-10-06
 
 Rilis kecil supaya hasil unduh dari GitHub benar-benar rapi dan siap dipasang.
@@ -87,6 +116,7 @@ Rilis pertama.
 - **Runtime lokal opsional** (Node, port 3721): baca PDF besar + konversi
   Word → PDF via Microsoft Word/LibreOffice.
 
+[0.1.3]: https://github.com/fadilismee/tuton-os/releases/tag/v0.1.3
 [0.1.2]: https://github.com/fadilismee/tuton-os/releases/tag/v0.1.2
 [0.1.1]: https://github.com/fadilismee/tuton-os/releases/tag/v0.1.1
 [0.1.0]: https://github.com/fadilismee/tuton-os/releases/tag/v0.1.0

@@ -10,7 +10,7 @@ import { icon } from './icons.js';
 import { buildPdf } from '../src/lib/minpdf.js';
 import { exportDocx, exportPdf, runtimeCapability, parseBlocks, blocksToText, guessTitle, docLabel } from '../src/export/index.js';
 import { stageExport, takeExport, peekExport } from '../src/export/pending.js';
-import { prepareJob, cancelJob, ocrPage, finishModule, exportCachedModule, buildRange, dbListModules, onOcrProgress, getModuleText } from '../src/bmp/engine.js';
+import { prepareJob, cancelJob, ocrPage, finishModule, exportCachedModule, buildRange, dbListModules, onOcrProgress, getModuleText, stagedPages } from '../src/bmp/engine.js';
 
 const $ = (s) => document.querySelector(s);
 const content = $('#content');
@@ -1446,7 +1446,7 @@ async function vSoal() {
 //  B. Manual — capture tab + teks DOM untuk situs lain (minpdf, tanpa OCR).
 const RBV_ROOT = 'https://pustaka.ut.ac.id';
 let bmpPages = []; // sesi memori mode manual
-// bmpRun: { runId, code, queue, tabId, mods:[{m,state,page,total,pages}], merge, ocrCtx }
+// bmpRun: { runId, code, queue, tabId, mods:[{m,state,page,total,pages}], merge, ocrCtx, speed, ocrQueue, ocrActive }
 let bmpRun = null;
 
 function rbvEl(id) { return document.querySelector('#' + id); }
@@ -1467,10 +1467,15 @@ function rbvPill(state, label) {
     pill.className = `badge ${cls}${state === 'run' ? ' pulse' : ''}`;
     pill.textContent = label;
   }
-  const btn = rbvEl('rbv-start');
+  const btn = rbvEl('rbv-rekam');
   if (btn) {
     btn.disabled = state === 'run';
     btn.style.opacity = state === 'run' ? '.45' : '';
+  }
+  const done = rbvEl('rbv-done');
+  if (done) {
+    done.disabled = state !== 'run';
+    done.style.opacity = state !== 'run' ? '.45' : '';
   }
 }
 function rbvStage(html) {
@@ -1522,50 +1527,6 @@ async function downloadBlobUrl(blobUrl, filename) {
   setTimeout(() => { try { URL.revokeObjectURL(blobUrl); } catch (_) {} }, 60000);
 }
 
-async function rbvStart() {
-  const code = (rbvEl('rbv-code').value || '').trim().toUpperCase();
-  const from = Math.max(1, Number(rbvEl('rbv-from').value) || 1);
-  const to = Math.max(from, Math.min(99, Number(rbvEl('rbv-to').value) || from));
-  const merge = !!rbvEl('rbv-mergeflag')?.checked;
-  if (!/^[A-Z0-9]{4,12}$/.test(code)) { notify('Kode BMP tidak valid (cth: MSIM4303).', 'error'); return; }
-  if (bmpRun) { notify('Job masih berjalan — hentikan dulu.', 'error'); return; }
-  try {
-    const granted = await chrome.permissions.request({ origins: [`${RBV_ROOT}/*`] });
-    if (!granted) { notify('Izin akses reader ditolak.', 'error'); return; }
-  } catch (e) { notify('Izin host gagal: ' + e.message, 'error'); return; }
-  const tabs = await chrome.tabs.query({ url: `${RBV_ROOT}/reader/*` }).catch(() => []);
-  let tab = tabs[0];
-  if (!tab) {
-    await chrome.tabs.create({ url: `${RBV_ROOT}/reader/index.php?subfolder=${encodeURIComponent(code)}/&doc=M${from}.pdf` });
-    rbvPill('stop', 'BUTUH TAB');
-    rbvStage('Tab reader dibuka. <b>Login bila diminta</b>, lalu klik <b>Proses</b> lagi.');
-    notify('Tab reader dibuka — login bila diminta, lalu klik Proses lagi.');
-    return;
-  }
-  const runId = 'tut' + Date.now().toString(36);
-  const queue = [];
-  for (let m = from; m <= to; m++) queue.push(m);
-  bmpRun = { runId, code, queue, tabId: tab.id, merge, mods: queue.map((m) => ({ m, state: 'wait', page: 0, total: 0, pages: 0 })), ocrCtx: '' };
-  try {
-    rbvStage('Menyiapkan mesin OCR lokal…');
-    await prepareJob(runId);
-  } catch (e) {
-    bmpRun = null;
-    rbvPill('error', 'GAGAL');
-    rbvStage(`Mesin lokal gagal: ${escapeHtml(e.message)}`);
-    notify(e.message, 'error');
-    return;
-  }
-  onOcrProgress((m) => {
-    if (!bmpRun || m.status !== 'recognizing text' || typeof m.progress !== 'number') return;
-    const md = rbvMod(bmpRun.code, bmpRun.queue[0]);
-    rbvStage(`Membaca teks halaman <b>${bmpRun.ocrCtx || ''}</b> — <b>${Math.round(m.progress * 100)}%</b>`);
-    if (md) { md.state = 'ocr'; paintRbvMods(); }
-  });
-  rbvPill('run', 'JALAN');
-  rbvLog(`Job: ${code} M${from}–M${to}${merge ? ' (gabung di akhir)' : ' (file per modul)'}`);
-  await rbvRunNextModule();
-}
 
 function waitTabComplete(tabId, timeoutMs = 30000) {
   return new Promise((resolve) => {
@@ -1661,7 +1622,8 @@ async function rbvRunNextModule() {
     if (!bmpRun || bmpRun.runId !== run.runId) return;
     try {
       const r = await chrome.tabs.sendMessage(run.tabId, {
-        type: 'TUTON_BMP_START_MODULE', runId: run.runId, code: run.code, module: mod, delayMs: 2500, maxPages: 500,
+        type: 'TUTON_BMP_START_MODULE', runId: run.runId, code: run.code, module: mod, delayMs: run.speed === 'biasa' ? 2500 : 1200, maxPages: 500,
+        autoScroll: true, speed: run.speed || 'cepat',
       });
       if (r?.ok) { started = true; break; }
       lastErr = r?.error || 'reader belum siap';
@@ -1676,6 +1638,207 @@ async function rbvRunNextModule() {
     rbvLog(`Modul ${mod} gagal start: ${lastErr}`);
     notify(`Gagal mulai modul ${mod}: ${lastErr}`, 'error');
     bmpRun = null;
+  }
+}
+
+async function rbvHarvestCurrent() {
+  const code = (rbvEl('rbv-code').value || '').trim().toUpperCase();
+  if (!/^[A-Z0-9]{4,12}$/.test(code)) { notify('Kode BMP tidak valid (cth: MSIM4303).', 'error'); return; }
+  if (bmpRun) { notify('Masih ada job berjalan — tunggu/hentikan dulu.', 'error'); return; }
+  try {
+    const granted = await chrome.permissions.request({ origins: [`${RBV_ROOT}/*`] });
+    if (!granted) { notify('Izin akses reader ditolak.', 'error'); return; }
+  } catch (e) { notify('Izin host gagal: ' + e.message, 'error'); return; }
+  const tabs = await chrome.tabs.query({ url: `${RBV_ROOT}/reader/*` }).catch(() => []);
+  const tab = tabs[0];
+  if (!tab) { notify('Tab reader belum terbuka. Buka modulnya di pustaka.ut.ac.id dulu.', 'error'); return; }
+
+  // Modul target: pakai nilai "Dari modul" apa adanya (user yang atur).
+  const mod = Math.max(1, Math.min(99, Number(rbvEl('rbv-from').value) || 1));
+
+  bmpRun = { runId: 'tut' + Date.now().toString(36), code, queue: [mod], tabId: tab.id, merge: false, harvestMode: true,
+    mods: [{ m: mod, state: 'fetch', page: 0, total: 0, pages: 0 }], ocrCtx: '' };
+  ensureBmpListener();
+  try { await prepareJob(bmpRun.runId); } catch (e) {
+    notify('Mesin OCR lokal gagal: ' + e.message, 'error'); bmpRun = null; return;
+  }
+  rbvPill('run', `PANEN M${mod}`);
+  rbvStage(`M${mod}: memanen halaman yang sudah tampil di viewer...`);
+  let ok = false;
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['src/bmp/rbv.js'] });
+    const r = await chrome.tabs.sendMessage(tab.id, { type: 'TUTON_BMP_HARVEST_LOADED', runId: bmpRun.runId, code, module: mod, delayMs: 1200 });
+    ok = !!r?.ok;
+  } catch (e) {
+    rbvStage(`M${mod}: gagal panen (${escapeHtml(e.message)}). Pastikan tab reader aktif di modul ini.`);
+    notify('Panen gagal: ' + e.message, 'error');
+    bmpRun = null;
+  }
+  if (!ok && bmpRun) { bmpRun = null; }
+}
+
+// Unduh otomatis penuh: user isi kode + rentang modul, extension yang jalan.
+async function rbvAutoStart() {
+  const code = (rbvEl('rbv-code').value || '').trim().toUpperCase();
+  if (!/^[A-Z0-9]{4,12}$/.test(code)) { notify('Kode BMP tidak valid (cth: MSIM4303).', 'error'); return; }
+  if (bmpRun) { notify('Masih ada job berjalan — tunggu/hentikan dulu.', 'error'); return; }
+  try {
+    const granted = await chrome.permissions.request({ origins: [`${RBV_ROOT}/*`] });
+    if (!granted) { notify('Izin akses reader ditolak.', 'error'); return; }
+  } catch (e) { notify('Izin host gagal: ' + e.message, 'error'); return; }
+  const tabs = await chrome.tabs.query({ url: `${RBV_ROOT}/reader/*` }).catch(() => []);
+  const tab = tabs[0];
+  if (!tab) { notify('Tab reader belum terbuka. Buka RBV dulu lalu login.', 'error'); return; }
+  let from = Math.max(1, Math.min(99, Number(rbvEl('rbv-from').value) || 1));
+  let to = Math.max(1, Math.min(99, Number(rbvEl('rbv-to').value) || from));
+  if (to < from) [from, to] = [to, from];
+  const queue = [];
+  for (let m = from; m <= to; m++) queue.push(m);
+  const speed = rbvEl('rbv-speed')?.value === 'biasa' ? 'biasa' : 'cepat';
+  bmpRun = {
+    runId: 'tut' + Date.now().toString(36), code, queue, tabId: tab.id,
+    merge: !!rbvEl('rbv-mergeflag')?.checked, autoMode: true, speed,
+    ocrQueue: [], ocrActive: false,
+    mods: queue.map((m) => ({ m, state: 'wait', page: 0, total: 0, pages: 0 })), ocrCtx: '',
+  };
+  ensureBmpListener();
+  try { await prepareJob(bmpRun.runId); } catch (e) {
+    notify('Mesin OCR lokal gagal: ' + e.message, 'error'); bmpRun = null; return;
+  }
+  rbvPill('run', `AUTO M${from}–M${to} ${speed.toUpperCase()}`);
+  rbvStage(`Mode <b>${speed}</b>: mengunduh otomatis M<b>${from}</b>–M<b>${to}</b>…`);
+  paintRbvMods();
+  rbvRunNextModule();
+}
+
+// Mulai perekaman pasif: extension hanya menyalin halaman yang dimuat viewer.
+async function rbvRecordStart() {
+  const code = (rbvEl('rbv-code').value || '').trim().toUpperCase();
+  if (!/^[A-Z0-9]{4,12}$/.test(code)) { notify('Kode BMP tidak valid (cth: MSIM4303).', 'error'); return; }
+  if (bmpRun) { notify('Masih ada job berjalan — tunggu/hentikan dulu.', 'error'); return; }
+  try {
+    const granted = await chrome.permissions.request({ origins: [`${RBV_ROOT}/*`] });
+    if (!granted) { notify('Izin akses reader ditolak.', 'error'); return; }
+  } catch (e) { notify('Izin host gagal: ' + e.message, 'error'); return; }
+  const tabs = await chrome.tabs.query({ url: `${RBV_ROOT}/reader/*` }).catch(() => []);
+  const tab = tabs[0];
+  if (!tab) { notify('Tab reader belum terbuka. Buka modulnya di pustaka.ut.ac.id dulu.', 'error'); return; }
+  const mod = Math.max(1, Math.min(99, Number(rbvEl('rbv-from').value) || 1));
+
+  // Lanjutkan dari halaman yang sudah tersimpan (kalau sesi sebelumnya putus).
+  let have = [];
+  try { have = await stagedPages(code, mod); } catch (_) { have = []; }
+
+  bmpRun = { runId: 'tut' + Date.now().toString(36), code, queue: [mod], tabId: tab.id, merge: !!rbvEl('rbv-mergeflag')?.checked,
+    recordMode: true, mods: [{ m: mod, state: 'fetch', page: have.length, total: 0, pages: have.length }], ocrCtx: '' };
+  ensureBmpListener();
+  try { await prepareJob(bmpRun.runId); } catch (e) {
+    notify('Mesin OCR lokal gagal: ' + e.message, 'error'); bmpRun = null; return;
+  }
+  rbvPill('run', `REKAM M${mod}`);
+  rbvStage(`M${mod}: merekam. Scroll pelan di tab reader sampai halaman terakhir${have.length ? ` (sudah ada ${have.length} halaman dari sesi lalu)` : ''}.`);
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['src/bmp/rbv.js'] });
+    const r = await chrome.tabs.sendMessage(tab.id, { type: 'TUTON_BMP_RECORD', runId: bmpRun.runId, code, module: mod, have, delayMs: 900 });
+    if (!r?.ok) { bmpRun = null; notify('Perekam tidak mau mulai: ' + (r?.error || '—'), 'error'); }
+  } catch (e) {
+    rbvStage(`M${mod}: gagal mulai merekam (${escapeHtml(e.message)}).`);
+    notify('Rekam gagal: ' + e.message, 'error');
+    bmpRun = null;
+  }
+}
+
+// Selesai menekan tombol: rakit apa pun yang sudah terekam (boleh belum lengkap).
+async function rbvDone() {
+  const run = bmpRun;
+  if (!run) { notify('Belum ada perekaman yang berjalan.', 'error'); return; }
+  const mod = run.mods[0]?.m || 1;
+  rbvStage(`M${mod}: menyelesaikan rekaman...`);
+  try { await chrome.tabs.sendMessage(run.tabId, { type: 'TUTON_BMP_STOP', runId: run.runId }); } catch (_) {}
+  await new Promise((r) => setTimeout(r, 600));
+  let have = [];
+  try { have = await stagedPages(run.code, mod); } catch (_) {}
+  if (!have.length) {
+    rbvPill('error', 'KOSONG');
+    rbvStage(`M${mod}: belum ada halaman yang terekam. Buka modulnya di reader, scroll pelan, lalu coba lagi.`);
+    notify('Belum ada halaman terekam.', 'error');
+    return;
+  }
+  run.recordMode = true;
+  await rbvRebuild(run.code, mod, have, run.runId, run.merge);
+  bmpRun = null;
+}
+
+// Rakit PDF dari halaman yang tersimpan bertahap. Halaman yang bolong
+// dilaporkan, bukan disembunyikan — jadi PDF tidak pernah terpotong diam-diam.
+async function rbvRebuild(code, moduleNo, have, runId, merge) {
+  const md = rbvMod(code, moduleNo);
+  if (md) { md.state = 'build'; md.pages = have.length; paintRbvMods(); }
+  rbvStage(`Modul <b>${moduleNo}</b>: merakit PDF dari ${have.length} halaman terekam...`);
+  const gaps = [];
+  for (let p = have[0]; p <= have[have.length - 1]; p++) if (!have.includes(p)) gaps.push(p);
+  try {
+    const { blobUrl, bytes } = await finishModule(code, moduleNo, have.length, runId, gaps.length > 0);
+    if (!merge || !gaps.length) await downloadBlobUrl(blobUrl, `tuton-${bmpSlug(code)}-M${moduleNo}.pdf`);
+    else setTimeout(() => { try { URL.revokeObjectURL(blobUrl); } catch (_) {} }, 60000);
+    if (md) { md.state = gaps.length ? 'error' : 'done'; md.pages = have.length; paintRbvMods(); }
+    rbvLog(`M${moduleNo}: ${have.length} hal (${(bytes / 1024).toFixed(0)} KB)${gaps.length ? ` — bolong: ${gaps.slice(0, 20).join(', ')}` : ' — terunduh.'}`);
+    if (gaps.length) {
+      rbvPill('stop', 'ADA BOLONG');
+      rbvStage(`Modul <b>${moduleNo}</b>: PDF jadi (${have.length} hal) tapi halaman <b>${gaps.slice(0, 15).join(', ')}</b> belum terekam. Scroll lagi ke halaman itu lalu klik <b>Selesai &amp; rakit PDF</b> lagi untuk menyempurnakan.`);
+      notify(`M${moduleNo}: ${gaps.length} halaman belum terekam.`, 'error');
+    } else {
+      rbvPill('done', 'SELESAI');
+      rbvStage(`Selesai — modul <b>${moduleNo}</b> (${have.length} hal) tersimpan &amp; terunduh.`);
+      notify(`M${moduleNo} selesai (${have.length} hal).`);
+    }
+    paintRbvCache();
+  } catch (e) {
+    if (md) { md.state = 'error'; paintRbvMods(); }
+    rbvPill('error', 'GAGAL');
+    rbvStage(`Modul <b>${moduleNo}</b> gagal dirakit: ${escapeHtml(e.message)}`);
+    rbvLog(`M${moduleNo} gagal rakit: ${e.message}`);
+    notify('Rakit PDF gagal: ' + e.message, 'error');
+  }
+}
+
+// Antrean OCR mode cepat: tangkap gambar terus, OCR di belakang layar.
+async function rbvOcrPump() {
+  const run = bmpRun;
+  if (!run || run.ocrActive) return;
+  run.ocrActive = true;
+  try {
+    while (run.ocrQueue?.length && bmpRun && bmpRun.runId === run.runId) {
+      const msg = run.ocrQueue.shift();
+      const md = rbvMod(run.code, msg.module);
+      try {
+        await ocrPage(run.code, msg.module, msg.page, msg.dataUrl, run.runId);
+        if (msg.totalPages) rbvBar('rbv-bar', (msg.page / msg.totalPages) * 100);
+      } catch (e) {
+        if (md) { md.state = 'error'; paintRbvMods(); }
+        rbvPill('error', 'GAGAL');
+        rbvStage(`OCR M${msg.module} h${msg.page} gagal: ${escapeHtml(e.message)}`);
+        rbvLog(`OCR M${msg.module} h${msg.page} gagal: ${e.message}`);
+        notify(`OCR gagal: ${e.message}`, 'error');
+        await rbvStop(true);
+        return;
+      }
+      if (msg.totalPages && md) { md.page = Math.max(md.page || 0, msg.page); md.total = msg.totalPages; paintRbvMods(); }
+      rbvStage(`Modul <b>${msg.module}</b>: tangkap gambar jalan, OCR latar: h<b>${msg.page}</b>${run.ocrQueue.length ? ` · antre ${run.ocrQueue.length}` : ''}.`);
+    }
+  } finally {
+    run.ocrActive = false;
+  }
+}
+
+// Tunggu antrean OCR mode cepat kosong sebelum rakit modul.
+async function rbvWaitOcrDrained(run, timeoutMs = 600000) {
+  const t0 = Date.now();
+  for (;;) {
+    if (!bmpRun || bmpRun.runId !== run.runId) throw new Error('Dibatalkan.');
+    if (!run.ocrActive && !(run.ocrQueue?.length)) return;
+    if (Date.now() - t0 > timeoutMs) throw new Error('OCR latar terlalu lama.');
+    await new Promise((r) => setTimeout(r, 300));
   }
 }
 
@@ -1861,44 +2024,142 @@ function ensureBmpListener() {
     const run = bmpRun;
     if (!run || msg.runId !== run.runId) return;
     (async () => {
-      if (msg.type === 'TUTON_BMP_PROGRESS') {
+      if (msg.type === 'TUTON_BMP_HARVEST_STATUS') {
+        // Status langsung saat merekam: user tahu persis sudah berapa halaman.
+        const live = rbvEl('rbv-live');
+        const md = rbvMod(run.code, msg.module);
+        if (md) { md.state = 'ocr'; md.pages = msg.count || 0; md.total = msg.totalPages || md.total; paintRbvMods(); }
+        if (live) {
+          live.textContent = `M${msg.module}: ${msg.count}${msg.totalPages ? '/' + msg.totalPages : ''} halaman terekam`
+            + (msg.pages?.length ? ` — [${msg.pages.join(', ')}]` : '')
+            + (msg.hint === 'scroll' ? ' · scroll pelan...' : '');
+        }
+        if (msg.hint === 'scroll') {
+          rbvStage(`M<b>${msg.module}</b>: <b>${msg.count}${msg.totalPages ? '/' + msg.totalPages : ''}</b> halaman terekam. Scroll pelan di tab reader supaya halaman berikutnya ikut termuat.`);
+        } else {
+          rbvStage(`M<b>${msg.module}</b>: merekam — <b>${msg.count}${msg.totalPages ? '/' + msg.totalPages : ''}</b> halaman.`);
+        }
+        if (msg.totalPages) rbvBar('rbv-bar', (msg.count / msg.totalPages) * 100);
+      } else if (msg.type === 'TUTON_BMP_PROGRESS') {
         const md = rbvMod(run.code, msg.module);
         if (md) { md.state = 'fetch'; md.page = msg.page; md.total = msg.totalPages || md.total; paintRbvMods(); }
-        rbvStage(`Modul <b>${msg.module}</b>: mengunduh halaman <b>${msg.page}${msg.totalPages ? '/' + msg.totalPages : ''}</b>`);
+        if (msg.hint === 'scroll') {
+          rbvStage(`Modul <b>${msg.module}</b>: menunggu halaman <b>${msg.page}${msg.totalPages ? '/' + msg.totalPages : ''}</b> — <b>scroll manual pelan</b> di tab reader sampai gambarnya tampil.`);
+        } else {
+          rbvStage(`Modul <b>${msg.module}</b>: menunggu halaman <b>${msg.page}${msg.totalPages ? '/' + msg.totalPages : ''}</b> termuat di viewer (scroll manual pelan bila diam).`);
+        }
         if (msg.totalPages) rbvBar('rbv-bar', ((msg.page - 1) / msg.totalPages) * 100);
       } else if (msg.type === 'TUTON_BMP_PAGE') {
         run.ocrCtx = `M${msg.module} h${msg.page}`;
         const md = rbvMod(run.code, msg.module);
         if (md) { md.state = 'ocr'; md.page = msg.page; md.total = msg.totalPages || md.total; paintRbvMods(); }
-        rbvStage(`Modul <b>${msg.module}</b>: membaca teks halaman <b>${msg.page}${msg.totalPages ? '/' + msg.totalPages : ''}</b>…`);
-        try {
-          await ocrPage(run.code, msg.module, msg.page, msg.dataUrl, run.runId);
-          if (msg.totalPages) rbvBar('rbv-bar', (msg.page / msg.totalPages) * 100);
-        } catch (e) {
-          if (md) { md.state = 'error'; paintRbvMods(); }
-          rbvPill('error', 'GAGAL');
-          rbvStage(`OCR M${msg.module} h${msg.page} gagal: ${escapeHtml(e.message)}`);
-          rbvLog(`OCR M${msg.module} h${msg.page} gagal: ${e.message}`);
-          notify(`OCR gagal: ${e.message}`, 'error');
-          await rbvStop(true);
-          return;
+        // Mode cepat (default): tangkap terus, OCR masuk antrean lokal.
+        if (run.speed === 'biasa') {
+          rbvStage(`Modul <b>${msg.module}</b>: membaca teks halaman <b>${msg.page}${msg.totalPages ? '/' + msg.totalPages : ''}</b>…`);
+          try {
+            await ocrPage(run.code, msg.module, msg.page, msg.dataUrl, run.runId);
+            if (msg.totalPages) rbvBar('rbv-bar', (msg.page / msg.totalPages) * 100);
+          } catch (e) {
+            if (md) { md.state = 'error'; paintRbvMods(); }
+            rbvPill('error', 'GAGAL');
+            rbvStage(`OCR M${msg.module} h${msg.page} gagal: ${escapeHtml(e.message)}`);
+            rbvLog(`OCR M${msg.module} h${msg.page} gagal: ${e.message}`);
+            notify(`OCR gagal: ${e.message}`, 'error');
+            await rbvStop(true);
+            return;
+          }
+          // ACK: reader baru boleh ambil halaman berikut (ritme lama).
+          try { await chrome.tabs.sendMessage(run.tabId, { type: 'TUTON_BMP_PAGE_ACK', runId: run.runId, module: msg.module, page: msg.page }); } catch (_) {}
+        } else {
+          run.ocrQueue = run.ocrQueue || [];
+          run.ocrQueue.push(msg);
+          rbvOcrPump();
         }
-        // ACK: reader baru boleh ambil halaman berikut (ritme upstream).
-        try { await chrome.tabs.sendMessage(run.tabId, { type: 'TUTON_BMP_PAGE_ACK', runId: run.runId, module: msg.module, page: msg.page }); } catch (_) {}
       } else if (msg.type === 'TUTON_BMP_RETRY') {
         rbvStage(`Modul <b>${msg.module}</b>: halaman <b>${msg.page}</b> tidak jelas — coba sekali lagi…`);
         rbvLog(`M${msg.module} h${msg.page}: retry sekali.`);
       } else if (msg.type === 'TUTON_BMP_MODULE_DONE') {
-        if (msg.result === 'complete') {
+        if (msg.result === 'caught') {
+          // Perekam berhenti sendiri (semua halaman terekam / idle / mode panen).
+          const have = msg.pages ?? 0;
+          const total = msg.totalPages;
+          const gaps = Array.isArray(msg.missing) ? msg.missing : [];
+          if (run.recordMode) {
+            // Mode rekam: JANGAN selesaikan sendiri — user yang menekan
+            // "Selesai & rakit PDF". Cukup laporkan progresnya.
+            rbvStage(`M<b>${msg.module}</b>: perekam berhenti — <b>${have}${total ? '/' + total : ''}</b> halaman terekam.`
+              + (gaps.length ? ` Belum: ${gaps.slice(0, 15).join(', ')}. Scroll ke halaman itu lalu <b>Selesai &amp; rakit PDF</b>.` : ' Semua halaman sudah terekam — tekan <b>Selesai &amp; rakit PDF</b>.'));
+            rbvPill('stop', gaps.length ? 'BELUM LENGKAP' : 'SIAP RAKIT');
+            rbvLog(`M${msg.module}: perekam berhenti, ${have} halaman${gaps.length ? `, bolong: ${gaps.slice(0,20).join(', ')}` : ''}.`);
+            return;
+          }
+          if (have <= 0) {
+            rbvPill('error', 'KOSONG');
+            rbvStage(`Modul <b>${msg.module}</b>: belum ada halaman terekam.`);
+            bmpRun = null;
+            return;
+          }
+          const ok = await rbvRebuild(run.code, msg.module, await stagedPages(run.code, msg.module).catch(() => []), run.runId, run.merge);
+          bmpRun = null;
+          return;
+        } else if (msg.result === 'complete') {
           const pages = msg.pages ?? 0;
+          // Mode cepat: rakit setelah OCR latar selesai, lalu lanjut antrean.
+          if (run.speed !== 'biasa') {
+            try {
+              rbvStage(`Modul <b>${msg.module}</b>: gambar lengkap (${pages} hal) — menunggu OCR latar…`);
+              await rbvWaitOcrDrained(run);
+            } catch (e) {
+              const md = rbvMod(run.code, msg.module);
+              if (md) { md.state = 'error'; paintRbvMods(); }
+              rbvPill('error', 'GAGAL');
+              rbvStage(`Modul <b>${msg.module}</b> gagal OCR latar: ${escapeHtml(e.message)}`);
+              await rbvStop(true);
+              return;
+            }
+          }
           const ok = await rbvFinishModule(run.code, msg.module, pages, run.runId, !run.merge);
           run.queue.shift();
-          if (ok) await rbvRunNextModule();
-          else {
-            rbvPill('error', 'GAGAL');
-            rbvStage(`Modul <b>${msg.module}</b> gagal dirakit — job berhenti.`);
-            await rbvStop(true);
+          if (ok) {
+            // Full otomatis: selalu lanjut ke modul berikutnya di antrean.
+            if (run.queue.length) {
+              rbvPill('run', `M${run.queue[0]}`);
+              rbvStage(`Modul <b>${msg.module}</b> selesai (${pages} hal). Lanjut otomatis ke <b>Modul ${run.queue[0]}</b>…`);
+              rbvLog(`M${msg.module} selesai (${pages} hal). Lanjut M${run.queue[0]}.`);
+              rbvRunNextModule();
+              return;
+            }
+            // Mode panen lawas: tawarkan modul berikut bila masih dalam rentang.
+            const nextMod = msg.module + 1;
+            const to = Number(rbvEl('rbv-to')?.value) || msg.module;
+            if (run.harvestMode && nextMod <= to) {
+              rbvStage(`Modul <b>${msg.module}</b> selesai (${pages} hal). Lanjut ke <b>Modul ${nextMod}</b>? Buka modulnya di tab reader, scroll sampai semua halaman tampil, lalu klik <b>Panen</b>.`);
+              rbvPill('done', `M${msg.module} OK`);
+              rbvLog(`M${msg.module} selesai. Buka M${nextMod} lalu klik Panen.`);
+              bmpRun = null;
+              paintRbvMods();
+              paintRbvCache();
+              notify(`M${msg.module} selesai. Buka M${nextMod} lalu klik Panen.`);
+              return;
+            }
+            bmpRun = null;
+            rbvPill('done', 'SELESAI');
+            rbvStage(`Selesai — modul <b>${msg.module}</b> (${pages} hal) tersimpan.`);
+            paintRbvMods(); paintRbvCache();
+            notify(`M${msg.module} selesai (${pages} hal).`);
+            return;
           }
+          rbvPill('error', 'GAGAL');
+          rbvStage(`Modul <b>${msg.module}</b> gagal dirakit — job berhenti.`);
+          await rbvStop(true);
+        } else if (msg.result === 'incomplete') {
+          const md = rbvMod(run.code, msg.module);
+          if (md) { md.state = 'error'; paintRbvMods(); }
+          rbvPill('stop', 'BELUM LENGKAP');
+          rbvStage(`Modul <b>${msg.module}</b>: ${escapeHtml(msg.reason || 'belum semua halaman tertangkap.')}`);
+          rbvLog(`M${msg.module}: belum lengkap — ${msg.reason || ''}`);
+          notify(`M${msg.module}: belum semua halaman tampil.`, 'error');
+          bmpRun = null;
         } else {
           const label = { blocked: 'Diblokir server (403/429/Rejected)', login_required: 'Sesi butuh login ulang', missing_module: 'Modul tidak ditemukan', error: 'Error' }[msg.result] || msg.result;
           const md = rbvMod(run.code, msg.module);
@@ -1920,20 +2181,38 @@ function vBmp() {
   ensureBmpListener();
   content.innerHTML = `
     <div class="card">
-      <div class="eyebrow">${icon('layers', 13)} RBV Reader · otomatis</div>
-      <div class="runhead"><span id="rbv-pill" class="badge dim">IDLE</span><span class="stage" id="rbv-stage">Siap. Isi kode + modul, lalu klik <b>Proses</b>.</span></div>
+      <div class="eyebrow">${icon('layers', 13)} RBV Reader · unduh otomatis</div>
+      <div class="runhead"><span id="rbv-pill" class="badge dim">IDLE</span><span class="stage" id="rbv-stage">Siap. Isi kode + rentang modul, pilih <b>Cepat</b> (default) atau <b>Biasa</b>, lalu klik <b>Unduh otomatis</b>.</span></div>
       <label class="f">Kode BMP</label><input id="rbv-code" placeholder="MSIM4303" class="mono" style="text-transform:uppercase">
       <div class="row">
         <div style="flex:1;min-width:90px"><label class="f">Dari modul</label><input id="rbv-from" type="number" value="1" min="1" max="99"></div>
         <div style="flex:1;min-width:90px"><label class="f">Sampai modul</label><input id="rbv-to" type="number" value="1" min="1" max="99"></div>
       </div>
+      <div class="row">
+        <div style="flex:1;min-width:140px"><label class="f">Mode unduh</label><select id="rbv-speed"><option value="cepat" selected>Cepat (default)</option><option value="biasa">Biasa</option></select></div>
+      </div>
       <label class="checkline"><input type="checkbox" id="rbv-mergeflag"><span>Gabung jadi 1 PDF di akhir (tanpa centang = file per modul, otomatis tersimpan tiap modul selesai)</span></label>
+      <div class="tiny" style="margin-top:10px;line-height:1.5">
+        <b>Cepat (default):</b> extension otomatis memuat tiap halaman lalu mengunduh semua modul dalam rentang. <b>Biasa:</b> ritme lama satu halaman per satu waktu.
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="btn primary" id="rbv-auto" style="flex:1">${icon('download', 14)}Unduh otomatis</button>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <button class="btn primary" id="rbv-rekam" style="flex:1">${icon('play', 14)}Mulai rekam</button>
+        <button class="btn" id="rbv-done" style="flex:1">${icon('check', 14)}Selesai &amp; rakit PDF</button>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <button class="btn ghost sm" id="rbv-panen">${icon('download', 13)}Panen sekali (1 sapu)</button>
+        <button class="btn ghost sm" id="rbv-nextmod">${icon('external', 13)}Buka modul berikutnya</button>
+      </div>
+      <div id="rbv-live" class="tiny mono" style="margin-top:8px"></div>
       <div class="tiny" style="margin-top:8px">Halaman modul berjalan</div>
       <div class="bar" id="rbv-bar"><i style="width:0%"></i></div>
       <div class="tiny" style="margin-top:8px">Keseluruhan modul</div>
       <div class="bar" id="rbv-bar-all"><i style="width:0%"></i></div>
       <div id="rbv-mods"></div>
-      <div class="row"><button class="btn primary" id="rbv-start">${icon('download', 14)}Proses</button><button class="btn danger" id="rbv-stop">Stop</button></div>
+      <div class="row"><button class="btn danger" id="rbv-stop">Stop</button></div>
       <div class="tiny" id="rbv-log"></div>
       <div id="rbv-cache"></div>
     </div>
@@ -1968,7 +2247,31 @@ function vBmp() {
   };
   paint();
   paintHist();
-  $('#rbv-start').addEventListener('click', rbvStart);
+  $('#rbv-rekam').addEventListener('click', rbvRecordStart);
+  $('#rbv-done').addEventListener('click', rbvDone);
+  $('#rbv-panen').addEventListener('click', rbvHarvestCurrent);
+  $('#rbv-auto').addEventListener('click', rbvAutoStart);
+  $('#rbv-nextmod').addEventListener('click', async () => {
+    const code = (rbvEl('rbv-code').value || '').trim().toUpperCase();
+    if (!code) { notify('Isi kode BMP dulu.', 'error'); return; }
+    const to = Math.max(1, Math.min(99, Number(rbvEl('rbv-to').value) || 1));
+    let from = Math.max(1, Number(rbvEl('rbv-from').value) || 1);
+    const cached = await dbListModules(code).catch(() => []);
+    // Cari modul pertama dalam rentang yang belum ada di cache.
+    let target = null;
+    for (let m = from; m <= to; m++) { if (!cached.includes(m)) { target = m; break; } }
+    if (target === null) { notify(`Modul ${from}–${to} sudah lengkap di cache. Klik Gabung untuk merakit PDF.`, 'ok'); return; }
+    rbvEl('rbv-from').value = target;
+    const tabs = await chrome.tabs.query({ url: `${RBV_ROOT}/reader/*` }).catch(() => []);
+    if (tabs[0]) {
+      try {
+        await chrome.tabs.update(tabs[0].id, { url: `${RBV_ROOT}/reader/index.php?subfolder=${encodeURIComponent(code)}/&doc=M${target}.pdf` });
+        notify(`Membuka Modul ${target}. Scroll sampai semua halaman tampil, lalu klik Panen.`);
+      } catch (e) { notify('Gagal buka modul: ' + e.message, 'error'); }
+    } else {
+      notify(`Modul ${target} diset. Buka modulnya di tab reader, lalu klik Panen.`);
+    }
+  });
   $('#rbv-stop').addEventListener('click', () => rbvStop(false));
   $('#rbv-code').addEventListener('change', paintRbvCache);
   paintRbvCache();
