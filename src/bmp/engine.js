@@ -80,6 +80,15 @@ async function dbGet(key) {
     req.onerror = () => { const e = req.error; db.close(); reject(e); };
   });
 }
+async function dbDelete(key) {
+  const db = await dbOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('pdfs', 'readwrite');
+    tx.objectStore('pdfs').delete(key);
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => { const e = tx.error; db.close(); reject(e); };
+  });
+}
 export async function dbListModules(code) {
   const prefix = `${String(code).toUpperCase()}:M`;
   const db = await dbOpen();
@@ -126,8 +135,18 @@ export async function dbClearCode(code) {
 function stagedPrefix(code, moduleNo) {
   return `staged:${String(code).toUpperCase()}:M${Number(moduleNo)}:`;
 }
+// Teks OCR per halaman disimpan terpisah (prefix `stagedtext:`) supaya sesi
+// LANJUTAN tetap punya teks lengkap: halaman yang di-OCR di sesi sebelumnya
+// tidak diulang, jadi teksnya harus bisa diambil dari simpanan — kalau tidak,
+// ringkasan/soal AI hanya berisi halaman yang di-OCR di sesi terakhir.
+function stagedTextPrefix(code, moduleNo) {
+  return `stagedtext:${String(code).toUpperCase()}:M${Number(moduleNo)}:`;
+}
 function stagedKey(code, moduleNo, pageNo) {
   return `${stagedPrefix(code, moduleNo)}${Number(pageNo)}`;
+}
+function stagedTextKey(code, moduleNo, pageNo) {
+  return `${stagedTextPrefix(code, moduleNo)}${Number(pageNo)}`;
 }
 async function dbKeysWithPrefix(prefix) {
   const db = await dbOpen();
@@ -151,7 +170,10 @@ export async function stagedPages(code, moduleNo) {
     .filter((n) => Number.isInteger(n) && n > 0).sort((a, b) => a - b);
 }
 export async function clearStaged(code, moduleNo) {
-  const keys = await dbKeysWithPrefix(stagedPrefix(code, moduleNo));
+  const keys = [
+    ...(await dbKeysWithPrefix(stagedPrefix(code, moduleNo))),
+    ...(await dbKeysWithPrefix(stagedTextPrefix(code, moduleNo))),
+  ];
   const db = await dbOpen();
   return new Promise((resolve, reject) => {
     const tx = db.transaction('pdfs', 'readwrite');
@@ -161,24 +183,40 @@ export async function clearStaged(code, moduleNo) {
     tx.onerror = () => { const e = tx.error; db.close(); reject(e); };
   });
 }
-// Sambungkan halaman bertahap yang BELUM ada di PDF sesi ini (pemulihan
-// setelah sesi terputus). Halaman yang sudah di-OCR sesi ini tidak diulang,
-// jadi tidak ada halaman dobel.
-async function appendMissingStaged(code, moduleNo) {
+// Rakit PDF URUT NOMOR HALAMAN dari simpanan bertahap (kunci per halaman:
+// `staged:CODE:M3:12`). Urutan jadi pasti — ini penting untuk sesi LANJUTAN:
+// halaman yang baru diunduh (mis. 32, 33, …) masuk lebih dulu daripada
+// halaman lama (1–31) yang sudah tersimpan, jadi urutan kedatangan ≠ urutan
+// halaman. Tanpa rakit ulang, PDF hasil lanjutan akan teracak.
+async function buildFromStaged(code, moduleNo, pages) {
   const { P } = libs();
-  const pages = await stagedPages(code, moduleNo);
+  const out = await P.PDFDocument.create();
+  out.setTitle(`${code} M${moduleNo} Searchable OCR`);
+  out.setCreator('Tuton OS BMP Studio');
   let added = 0;
   for (const p of pages) {
-    if (pagesInPdf.has(p)) continue;
     const bytes = await dbGet(stagedKey(code, moduleNo, p));
     if (!bytes) continue;
     const doc = await P.PDFDocument.load(new Uint8Array(bytes));
-    const copied = await currentPdf.copyPages(doc, doc.getPageIndices());
-    copied.forEach((pg) => currentPdf.addPage(pg));
-    pagesInPdf.add(p);
+    const copied = await out.copyPages(doc, doc.getPageIndices());
+    copied.forEach((pg) => out.addPage(pg));
     added++;
   }
-  return added;
+  return { pdf: out, pages: added };
+}
+
+// Rakit PDF PARSIAL (modul belum lengkap karena jaringan) tanpa mengotori
+// cache modul: hasilnya disimpan di kunci `partial:CODE:M{n}`, dan halaman
+// bertahap DIBIARKAN supaya sisanya bisa disusulkan nanti tanpa OCR ulang.
+export async function assembleStaged(code, moduleNo) {
+  const C = String(code).toUpperCase();
+  const have = await stagedPages(C, moduleNo);
+  if (!have.length) throw new Error(`Belum ada halaman tersimpan untuk Modul ${moduleNo}.`);
+  const { pdf, pages } = await buildFromStaged(C, moduleNo, have);
+  const bytes = await pdf.save();
+  await dbPut(`partial:${C}:M${moduleNo}`, bytes);
+  const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+  return { blobUrl: url, bytes: bytes.length, pages, have };
 }
 
 // ---------- Job lifecycle ----------
@@ -246,26 +284,50 @@ export async function ocrPage(code, moduleNo, pageNo, dataUrl, runId) {
   try { await dbPut(stagedKey(code, moduleNo, pageNo), res.data.pdf); } catch (_) {}
   const text = String(res?.data?.text || '').trim();
   if (currentTextKey === key) currentTexts[pageNo - 1] = text;
+  // Teks per halaman ikut disimpan supaya sesi lanjutan tetap punya teks utuh.
+  if (text) { try { await dbPut(stagedTextKey(code, moduleNo, pageNo), text); } catch (_) {} }
   return text;
 }
 
 export async function finishModule(code, moduleNo, pages, runId, keepStaged = false) {
   const key = `${code}:M${moduleNo}`;
   if (!ownsActivePdf(runId, key)) throw new Error('Finalisasi dari proses lama.');
-  const pdf = currentPdf;
-  // Halaman bertahap: PDF parsial dari sesi sebelumnya disambungkan lebih dulu,
-  // supaya hasil panen tidak hilang saat user menutup sidepanel / sesi reset.
-  await appendMissingStaged(code, moduleNo);
-  if (pdf.getPageCount() !== Number(pages)) {
-    throw new Error(`Halaman OCR (${pdf.getPageCount()}) tidak cocok dengan yang diunduh (${pages}). PDF tidak disimpan agar tidak terpotong.`);
+  // Halaman bertahap: rakit ulang dari simpanan (urut nomor halaman) supaya
+  // sesi lanjutan — yang hanya mengejar halaman bolong — tetap menghasilkan
+  // PDF dengan urutan benar dan jumlah halaman utuh.
+  const staged = await stagedPages(code, moduleNo);
+  let finalPdf = currentPdf;
+  if (staged.length) {
+    const built = await buildFromStaged(code, moduleNo, staged);
+    if (built.pages) finalPdf = built.pdf;
   }
-  const bytes = await pdf.save();
+  if (finalPdf.getPageCount() !== Number(pages)) {
+    throw new Error(`Halaman OCR (${finalPdf.getPageCount()}) tidak cocok dengan yang diunduh (${pages}). PDF tidak disimpan agar tidak terpotong.`);
+  }
+  const bytes = await finalPdf.save();
   await dbPut(key, bytes);
+  // Modul sudah utuh: PDF parsial dari percobaan sebelumnya tidak diperlukan lagi.
+  try { await dbDelete(`partial:${String(code).toUpperCase()}:M${moduleNo}`); } catch (_) {}
   // Simpan teks OCR ke storage agar ringkasan/soal AI bisa dipakai kapan saja
-  // (tanpa re-OCR, tanpa harus mengulang job).
+  // (tanpa re-OCR, tanpa harus mengulang job). Teks diambil dari simpanan
+  // per halaman supaya sesi lanjutan tetap lengkap 1..N, bukan cuma halaman
+  // yang kebetulan di-OCR di sesi terakhir.
   try {
+    let texts = currentTexts;
+    const tkeys = await dbKeysWithPrefix(stagedTextPrefix(code, moduleNo));
+    if (tkeys.length) {
+      const arr = [];
+      for (const k of tkeys) {
+        const p = Number.parseInt(k.slice(stagedTextPrefix(code, moduleNo).length), 10);
+        if (!Number.isInteger(p) || p < 1) continue;
+        const t = await dbGet(k);
+        if (typeof t === 'string' && t.trim()) arr[p - 1] = t;
+      }
+      if (arr.some(Boolean)) texts = arr;
+    }
+    currentTexts = texts;
     const all = (await chrome.storage.local.get(['tuton_modtexts'])).tuton_modtexts || {};
-    all[key] = { texts: currentTexts.filter(Boolean), savedAt: Date.now() };
+    all[key] = { texts: texts.filter(Boolean), savedAt: Date.now() };
     await chrome.storage.local.set({ tuton_modtexts: all });
   } catch { /* teks best-effort; PDF tetap tersimpan */ }
   const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));

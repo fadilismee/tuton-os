@@ -3,7 +3,7 @@
 **Asisten akademik lokal-first untuk mahasiswa Universitas Terbuka (UT).**
 Extension Chrome/Edge — gratis, opensource, datanya tinggal di perangkatmu.
 
-[![Rilis](https://img.shields.io/badge/rilis-v0.1.3-00e68a?style=flat-square)](https://github.com/fadilismee/tuton-os/releases)
+[![Rilis](https://img.shields.io/badge/rilis-v0.1.4-00e68a?style=flat-square)](https://github.com/fadilismee/tuton-os/releases)
 [![Lisensi](https://img.shields.io/badge/lisensi-GPL--3.0-8fb8ff?style=flat-square)](LICENSE)
 [![Manifest](https://img.shields.io/badge/Manifest-V3-9aa3ab?style=flat-square)](manifest.json)
 [![Platform](https://img.shields.io/badge/platform-Chrome%20%7C%20Edge%20desktop-9aa3ab?style=flat-square)](#batasan)
@@ -42,7 +42,7 @@ Perbandingan penuh: [`docs/screenshots/tema-gelap-terang.jpg`](docs/screenshots/
 
 ## Unduh
 
-**[⬇️ tuton-os-v0.1.3.zip](https://github.com/fadilismee/tuton-os/releases/download/v0.1.3/tuton-os-v0.1.3.zip)**
+**[⬇️ tuton-os-v0.1.4.zip](https://github.com/fadilismee/tuton-os/releases/download/v0.1.4/tuton-os-v0.1.4.zip)**
 
 Setelah unduh: **ekstrak** → `chrome://extensions` → nyalakan **Developer mode**
 → **Load unpacked** → pilih folder hasil ekstrak.
@@ -78,7 +78,10 @@ Kamu juga bisa langsung minta di chat: *"jadiin PDF"*, *"bikin docx"*.
 ### BMP Studio
 Reader modul UT (`pustaka.ut.ac.id`) diambil halaman per halaman, dibaca dengan
 OCR bahasa Indonesia, lalu dirakit menjadi **PDF searchable** yang tersimpan
-lokal dan langsung terunduh.
+lokal dan langsung terunduh. Kalau jaringan jelek di tengah unduhan, halaman
+yang macet **dilewati** (bukan menggagalkan semuanya), hasil sementara tetap
+diunduh sebagai PDF parsial, dan sisanya disusul lewat **Lanjutkan yang belum**
+— halaman yang sudah ada tidak diulang dan unduhan tahan tutup sidepanel.
 
 ### IPK & Simulasi
 Kalkulator IPK skala UT (skema 30/70, 50/50, 60/40 praktik, TTM/Tuweb) plus

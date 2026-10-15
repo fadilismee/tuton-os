@@ -132,6 +132,14 @@
   const HARVEST_TIMEOUT_MS = 25000;
   const HARVEST_SETTLE_MS = 1500;
 
+  // Kesabaran per halaman di mode Cepat. Kalau jaringan jelek, halaman yang
+  // macet DILEWATI (bukan menggagalkan modul): sisanya tetap diunduh, halaman
+  // bolong disusulkan di pass kedua atau pada sesi lanjutan.
+  const STALL_MS = 15000;          // tunggu pass pertama
+  const STALL_RETRY_MS = 8000;     // tunggu pass kedua (halaman yang tadi macet)
+  const MAX_CONSEC_STALL = 3;      // 3 halaman macet beruntun = jaringan putus
+  const NO_PROGRESS_MS = 45000;    // tidak ada halaman baru sama sekali
+
   // Kontainer scroll vertikal FlowPaper: [id^="pagesContainer"].
   // (Dipakai hanya untuk baca posisi — scraper TIDAK pernah scroll.)
 
@@ -424,6 +432,13 @@
   // tanpa navigasi, berhenti saat Request Rejected / login berubah.
   // Tidak menunggu ACK OCR antar-halaman (OCR diantre di sidepanel),
   // jadi penangkapan jalan terus sampai modul lengkap.
+  //
+  // JARINGAN JELEK (keluhan nyata: macet di halaman 32/41 lalu gagal total):
+  // halaman yang tidak kunjung termuat TIDAK lagi mematikan modul. Halaman itu
+  // dilewati (`TUTON_BMP_STALL`) dan sapuan lanjut ke halaman berikutnya; di
+  // akhir halaman yang macet dicoba sekali lagi (pass 2). Modul selesai dengan
+  // daftar `missing` — pemanggil merakit PDF parsial dan menawarkan lanjutan,
+  // sehingga halaman yang sudah ada tidak pernah diulang.
   async function runModuleFast(cfg) {
     const { runId, code, module, maxPages, have } = cfg;
     const stillActive = () => Boolean(runId) && activeRunId === runId;
@@ -458,39 +473,26 @@
       else cont.scrollTop = Math.min(cont.scrollHeight - cont.clientHeight, (pageNo - 1) * (cont.clientHeight || 700));
       return true;
     };
-    const deadline = Date.now() + Math.max(180000, totalPages * 15000);
-    let lastNewAt = Date.now();
-    let currentTarget = 0;
-    let targetSince = Date.now();
-    for (;;) {
-      if (!stillActive()) return;
-      if (pageRejected()) {
-        post({ type: 'TUTON_BMP_MODULE_DONE', runId, module, result: 'blocked', reason: 'Request Rejected muncul saat mengunduh.' });
-        return;
-      }
-      if (passwordVisible()) {
-        post({ type: 'TUTON_BMP_MODULE_DONE', runId, module, result: 'login_required', reason: 'Sesi butuh login ulang.' });
-        return;
-      }
-      let next = 0;
-      for (let p = 1; p <= totalPages; p++) { if (!harvestedPages.has(p)) { next = p; break; } }
-      if (!next) {
-        post({ type: 'TUTON_BMP_MODULE_DONE', runId, module, result: 'complete', pages: downloaded, totalPages });
-        return;
-      }
-      if (next !== currentTarget) {
-        currentTarget = next;
-        targetSince = Date.now();
-        scrollToPage(next);
-        post({ type: 'TUTON_BMP_PROGRESS', runId, module, page: next, totalPages });
-      } else if (Date.now() - targetSince > 25000) {
-        post({ type: 'TUTON_BMP_MODULE_DONE', runId, module, result: 'incomplete', page: next, totalPages,
-          reason: `Halaman ${next}/${totalPages} tidak kunjung dimuat.` });
-        return;
-      }
+    const missingFrom = () => {
+      const out = [];
+      for (let p = 1; p <= totalPages; p++) if (!harvestedPages.has(p)) out.push(p);
+      return out;
+    };
+    const finish = (result, extra) => {
+      const missing = missingFrom();
+      post({ type: 'TUTON_BMP_MODULE_DONE', runId, module, result,
+        page: extra?.page || 0, pages: harvestedPages.size, totalPages,
+        missing: missing.slice(0, 40),
+        reason: extra?.reason });
+    };
+
+    // Ambil piksel semua halaman yang SUDAH dimuat viewer (bisa lebih dari
+    // satu sekaligus — FlowPaper kadang memuat beberapa halaman sekaligus).
+    const harvest = async () => {
       const fresh = loadedModuleImages(module).filter((x) => !harvestedPages.has(x.page));
+      let got = 0;
       for (const src of fresh) {
-        if (!stillActive()) return;
+        if (!stillActive()) return got;
         let dataUrl = null;
         try { dataUrl = await grabPageDataUrl(src); } catch (_) { dataUrl = null; }
         if (!dataUrl || dataUrl.length < 1000) continue;
@@ -499,21 +501,92 @@
         harvestedPages.add(src.page);
         downloaded++;
         lastNewAt = Date.now();
+        got++;
         post({ type: 'TUTON_BMP_HARVEST_STATUS', runId, module,
           count: downloaded, totalPages, pages: [...harvestedPages].sort((a, b) => a - b), hint: 'ok' });
       }
-      if (Date.now() - lastNewAt > 40000) {
-        post({ type: 'TUTON_BMP_MODULE_DONE', runId, module, result: 'incomplete', totalPages,
-          reason: 'Berhenti: 40 detik tanpa halaman baru.' });
-        return;
+      return got;
+    };
+
+    // Tunggu satu halaman termuat. Return 'ok' | 'stall' | 'stop' |
+    // 'blocked' | 'login' | 'deadline'. TIDAK pernah membunuh modul.
+    const waitTarget = async (pageNo, budgetMs) => {
+      currentTarget = pageNo;
+      targetSince = Date.now();
+      scrollToPage(pageNo);
+      for (;;) {
+        if (!stillActive()) return 'stop';
+        if (pageRejected()) return 'blocked';
+        if (passwordVisible()) return 'login';
+        await harvest();
+        if (harvestedPages.has(pageNo)) return 'ok';
+        if (Date.now() - targetSince > budgetMs) return 'stall';
+        // Tidak ada kemajuan sama sekali (jaringan putus) → jangan tunggu lama.
+        if (Date.now() - lastNewAt > NO_PROGRESS_MS) return 'stall';
+        if (Date.now() > deadline) return 'deadline';
+        await sleep(250);
       }
-      if (Date.now() > deadline) {
-        post({ type: 'TUTON_BMP_MODULE_DONE', runId, module, result: 'incomplete', totalPages,
-          reason: 'Batas waktu modul tercapai.' });
-        return;
+    };
+
+    const deadline = Date.now() + Math.max(180000, totalPages * 15000);
+    let lastNewAt = Date.now();
+    let currentTarget = 0;
+    let targetSince = Date.now();
+    const stalled = [];
+    let consecStall = 0;
+    let networkDead = false;
+
+    // PASS 1 — sapu semua halaman yang belum. Halaman yang macet (jaringan
+    // jelek, gambar tak kunjung termuat) DILEWATI, bukan mematikan modul:
+    // sisanya tetap diunduh, dan halaman yang dilewati disusulkan di pass 2
+    // atau pada sesi lanjutan tanpa mengulang halaman yang sudah ada.
+    const order1 = missingFrom();
+    for (const p of order1) {
+      if (!stillActive()) return;
+      if (harvestedPages.has(p)) continue;
+      post({ type: 'TUTON_BMP_PROGRESS', runId, module, page: p, totalPages });
+      const r = await waitTarget(p, STALL_MS);
+      if (r === 'stop') return;
+      if (r === 'blocked') { finish('blocked', { page: p, reason: 'Request Rejected muncul saat mengunduh.' }); return; }
+      if (r === 'login') { finish('login_required', { page: p, reason: 'Sesi butuh login ulang.' }); return; }
+      if (r === 'deadline') { finish('incomplete', { reason: 'Batas waktu modul tercapai.' }); return; }
+      if (r === 'ok') { consecStall = 0; continue; }
+      stalled.push(p);
+      consecStall++;
+      post({ type: 'TUTON_BMP_STALL', runId, module, page: p, totalPages, count: stalled.length,
+        reason: `Halaman ${p}/${totalPages} tidak kunjung termuat — dilewati dulu, lanjut halaman berikutnya.` });
+      if (consecStall >= MAX_CONSEC_STALL) {
+        networkDead = true;
+        post({ type: 'TUTON_BMP_STALL', runId, module, page: p, totalPages, count: stalled.length, networkDead: true,
+          reason: `${MAX_CONSEC_STALL} halaman beruntun macet — sepertinya jaringan putus. Sisanya disimpan dulu.` });
+        break;
       }
-      await sleep(250);
     }
+
+    // PASS 2 — halaman yang macet dicoba sekali lagi dengan sabar lebih pendek
+    // (jaringan sering balik setelah beberapa detik). Dilewati kalau masih macet.
+    if (!networkDead && stalled.length) {
+      for (const p of stalled) {
+        if (!stillActive()) return;
+        if (harvestedPages.has(p)) continue;
+        post({ type: 'TUTON_BMP_PROGRESS', runId, module, page: p, totalPages, retry: true });
+        const r = await waitTarget(p, STALL_RETRY_MS);
+        if (r === 'stop') return;
+        if (r === 'blocked') { finish('blocked', { page: p, reason: 'Request Rejected muncul saat mengunduh.' }); return; }
+        if (r === 'login') { finish('login_required', { page: p, reason: 'Sesi butuh login ulang.' }); return; }
+        if (r === 'deadline') { finish('incomplete', { reason: 'Batas waktu modul tercapai.' }); return; }
+        if (r !== 'ok') {
+          post({ type: 'TUTON_BMP_STALL', runId, module, page: p, totalPages, count: stalled.length, final: true,
+            reason: `Halaman ${p}/${totalPages} tetap tidak termuat — disusulkan nanti (bisa dilanjutkan).` });
+        }
+      }
+    }
+
+    const missing = missingFrom();
+    if (!missing.length) { finish('complete', { page: 0 }); return; }
+    // Modul tidak lengkap: hasil yang sudah ada DIPERTAHANKAN supaya bisa
+    // dirakit jadi PDF parsial dan disusulkan nanti tanpa mengulang.
+    finish('incomplete', { page: missing[0], reason: `${missing.length} halaman belum termuat (jaringan). Sisa: ${missing.slice(0, 12).join(', ')}. Halaman yang sudah ada tetap tersimpan dan bisa dilanjutkan kapan saja.` });
   }
 
   async function runModule(cfg) {

@@ -4,6 +4,43 @@ Semua perubahan penting proyek ini dicatat di sini.
 Format mengikuti [Keep a Changelog](https://keepachangelog.com/id/1.1.0/)
 dan versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 
+## [0.1.4] — 2026-10-15
+
+Unduhan BMP tidak lagi gagal total saat jaringan jelek di tengah jalan.
+
+### Diperbaiki
+- **Halaman yang macet (mis. 32/41) tidak lagi mematikan unduhan.** Dulu satu
+  halaman yang tidak kunjung termuat langsung menghentikan modul dan hasil
+  sebelumnya dibuang tanpa PDF. Sekarang halaman itu **dilewati** (`TUTON_BMP_STALL`),
+  sapuan lanjut ke halaman berikutnya, dan di akhir halaman yang macet dicoba
+  sekali lagi. Hasil yang sudah ada **tetap diunduh sebagai PDF parsial**
+  (nama file menyebut `parsial-31dari41`), jadi waktunya tidak terbuang.
+- **Tombol "Lanjutkan yang belum".** Modul yang belum lengkap dicatat di
+  `tuton_bmp_pending` (tahan tutup sidepanel / restart browser), lalu bisa
+  disusul kapan saja: extension hanya mengunduh & meng-OCR **halaman yang
+  bolong**, halaman yang sudah ada tidak diulang. Bisa per modul atau sekaligus.
+- **Jaringan putus dikenali cepat**: 3 halaman beruntun macet → berhenti rapi
+  dengan laporan halaman bolong, bukan menggantung 15 detik per halaman sisa.
+- **Modul berikutnya tetap jalan**: satu modul yang belum lengkap tidak lagi
+  membatalkan sisa rentang — lanjut otomatis ke modul berikutnya, sisanya
+  disusulkan lewat tombol Lanjutkan.
+- **OCR yang gagal tidak lagi mematikan job**: halaman dicoba ulang sekali,
+  kalau tetap gagal halaman itu dilaporkan bolong dan sisanya tetap diproses.
+
+### Ditambahkan
+- Uji regresi `npm run test:bmp`: perilaku pembaca saat halaman macet, lanjutan
+  yang tidak mengulang halaman, dan rakit PDF (urutan halaman 1…N + penolakan
+  modul yang belum lengkap).
+
+### Diubah
+- Urutan halaman PDF selalu dirakit ulang dari simpanan per halaman, sehingga
+  hasil lanjutan tidak mungkin teracak (halaman baru diproses lebih dulu
+  daripada halaman lama).
+- Modul yang belum lengkap tidak pernah ditandai selesai di cache lokal:
+  PDF parsialnya disimpan di kunci terpisah dan dihapus begitu modul tuntas.
+- Teks OCR disimpan per halaman, jadi ringkasan/soal AI tetap lengkap setelah
+  modul disusun dari beberapa sesi.
+
 ## [0.1.3] — 2026-10-15
 
 BMP Studio (RBV reader pustaka.ut.ac.id) dirombak jadi **perekam pasif** — satu-satunya
@@ -116,6 +153,7 @@ Rilis pertama.
 - **Runtime lokal opsional** (Node, port 3721): baca PDF besar + konversi
   Word → PDF via Microsoft Word/LibreOffice.
 
+[0.1.4]: https://github.com/fadilismee/tuton-os/releases/tag/v0.1.4
 [0.1.3]: https://github.com/fadilismee/tuton-os/releases/tag/v0.1.3
 [0.1.2]: https://github.com/fadilismee/tuton-os/releases/tag/v0.1.2
 [0.1.1]: https://github.com/fadilismee/tuton-os/releases/tag/v0.1.1

@@ -10,7 +10,7 @@ import { icon } from './icons.js';
 import { buildPdf } from '../src/lib/minpdf.js';
 import { exportDocx, exportPdf, runtimeCapability, parseBlocks, blocksToText, guessTitle, docLabel } from '../src/export/index.js';
 import { stageExport, takeExport, peekExport } from '../src/export/pending.js';
-import { prepareJob, cancelJob, ocrPage, finishModule, exportCachedModule, buildRange, dbListModules, onOcrProgress, getModuleText, stagedPages } from '../src/bmp/engine.js';
+import { prepareJob, cancelJob, ocrPage, finishModule, assembleStaged, exportCachedModule, buildRange, dbListModules, onOcrProgress, getModuleText, stagedPages } from '../src/bmp/engine.js';
 
 const $ = (s) => document.querySelector(s);
 const content = $('#content');
@@ -1559,38 +1559,170 @@ function waitTabUrl(tabId, needle, timeoutMs = 30000) {
   });
 }
 
+// ---------- Modul belum lengkap (bisa dilanjutkan kapan saja) ----------
+// Kasus nyata: jaringan jelek di tengah unduhan (mis. macet di halaman 32/41),
+// laptop ditutup, dilanjutkan besok. Catatan ini disimpan di storage supaya
+// tetap ada walau sidepanel ditutup / browser di-restart.
+// tuton_bmp_pending: { codes: { KODE: { "3": { total, have, missing[], at } } } }
+async function bmpPendingStore() {
+  const s = await load('tuton_bmp_pending', { codes: {} });
+  if (!s || typeof s !== 'object') return { codes: {} };
+  if (!s.codes || typeof s.codes !== 'object') s.codes = {};
+  return s;
+}
+async function bmpPendingList(code) {
+  const s = await bmpPendingStore();
+  const c = s.codes[String(code).toUpperCase()] || {};
+  return Object.keys(c).map((m) => ({ m: Number(m), ...c[m] }))
+    .filter((x) => Number.isInteger(x.m) && x.m > 0).sort((a, b) => a.m - b.m);
+}
+async function bmpPendingMark(code, moduleNo, total, have, missing) {
+  const s = await bmpPendingStore();
+  const key = String(code).toUpperCase();
+  const c = s.codes[key] || (s.codes[key] = {});
+  c[moduleNo] = {
+    total: Number(total) || 0,
+    have: (have || []).length,
+    missing: (missing || []).slice(0, 100),
+    at: new Date().toISOString().slice(0, 10),
+  };
+  await save('tuton_bmp_pending', s);
+}
+async function bmpPendingClear(code, moduleNo) {
+  const s = await bmpPendingStore();
+  const key = String(code).toUpperCase();
+  const c = s.codes[key];
+  if (!c || !c[moduleNo]) return;
+  delete c[moduleNo];
+  if (!Object.keys(c).length) delete s.codes[key];
+  await save('tuton_bmp_pending', s);
+}
+
+// Tombol "Lanjutkan yang belum" menampilkan jumlah modul yang tertunda.
+async function rbvResumeBadge() {
+  const btn = rbvEl('rbv-lanjut');
+  if (!btn) return;
+  const code = (rbvEl('rbv-code')?.value || '').trim().toUpperCase();
+  let n = 0;
+  if (code) { try { n = (await bmpPendingList(code)).length; } catch (_) { n = 0; } }
+  btn.innerHTML = `${icon('refresh', 14)}Lanjutkan yang belum${n ? ` (${n})` : ''}`;
+}
+
+// Lanjutkan unduhan yang belum tuntas: halaman yang SUDAH tersimpan tidak
+// diunduh/di-OCR ulang — pembaca hanya mengejar halaman yang bolong, lalu PDF
+// final dirakit ulang dengan urutan benar.
+async function rbvResumeRun(onlyMod) {
+  const code = (rbvEl('rbv-code').value || '').trim().toUpperCase();
+  if (!/^[A-Z0-9]{4,12}$/.test(code)) { notify('Kode BMP tidak valid (cth: MSIM4303).', 'error'); return; }
+  if (bmpRun) { notify('Masih ada job berjalan — tunggu/hentikan dulu.', 'error'); return; }
+  const pend = await bmpPendingList(code).catch(() => []);
+  const cached = await dbListModules(code).catch(() => []);
+  // Modul yang ternyata sudah lengkap di cache: catatan tertundanya dibuang
+  // supaya tombol Lanjutkan tidak menawarkan pekerjaan yang sudah selesai.
+  for (const p of pend) { if (cached.includes(p.m)) await bmpPendingClear(code, p.m).catch(() => {}); }
+  const target = Number(onlyMod) || 0;
+  let mods = pend.map((p) => p.m).filter((m) => !cached.includes(m));
+  if (target) mods = mods.filter((m) => m === target);
+  if (!mods.length) {
+    notify(pend.length ? 'Semua modul tertunda sudah lengkap.' : 'Tidak ada unduhan tertunda untuk kode ini.', 'error');
+    await rbvResumeBadge();
+    return;
+  }
+  try {
+    const granted = await chrome.permissions.request({ origins: [`${RBV_ROOT}/*`] });
+    if (!granted) { notify('Izin akses reader ditolak.', 'error'); return; }
+  } catch (e) { notify('Izin host gagal: ' + e.message, 'error'); return; }
+  const tabs = await chrome.tabs.query({ url: `${RBV_ROOT}/reader/*` }).catch(() => []);
+  const tab = tabs[0];
+  if (!tab) {
+    await chrome.tabs.create({ url: `${RBV_ROOT}/reader/index.php?subfolder=${encodeURIComponent(code)}/&doc=M${mods[0]}.pdf` });
+    rbvPill('stop', 'BUTUH TAB');
+    rbvStage('Tab reader dibuka. <b>Login bila diminta</b>, lalu klik <b>Lanjutkan yang belum</b> lagi.');
+    notify('Tab reader dibuka — login dulu, lalu klik Lanjutkan lagi.');
+    return;
+  }
+  const speed = rbvEl('rbv-speed')?.value === 'biasa' ? 'biasa' : 'cepat';
+  bmpRun = {
+    runId: 'tut' + Date.now().toString(36), code, queue: mods.slice(), tabId: tab.id,
+    merge: false, autoMode: true, resumeMode: true, speed, ocrQueue: [], ocrActive: false,
+    ocrFailed: new Map(), ocrTries: new Map(),
+    mods: mods.map((m) => {
+      const p = pend.find((x) => x.m === m) || {};
+      return { m, state: 'wait', page: p.have || 0, total: p.total || 0, pages: p.have || 0 };
+    }),
+    ocrCtx: '',
+  };
+  ensureBmpListener();
+  try { await prepareJob(bmpRun.runId); } catch (e) {
+    notify('Mesin OCR lokal gagal: ' + e.message, 'error'); bmpRun = null; return;
+  }
+  rbvPill('run', `LANJUT ${mods.length} MODUL`);
+  rbvStage(`Melanjutkan <b>${mods.length} modul</b> (M${mods.join(', M')}) — hanya halaman yang bolong yang diunduh &amp; di-OCR ulang.`);
+  rbvLog(`Lanjutkan: M${mods.join(', M')}.`);
+  paintRbvMods();
+  rbvRunNextModule();
+}
+
 async function rbvRunNextModule() {
   const run = bmpRun;
   if (!run) return;
   const mod = run.queue[0];
   if (mod === undefined) {
     // Semua modul selesai → gabung bila dicentang.
+    // Modul yang belum lengkap (jaringan) TIDAK ikut digabung: buildRange
+    // butuh rentang utuh, jadi gabungan hanya dibuat kalau semua modul rentang
+    // benar-benar ada di cache — sisanya dilaporkan apa adanya.
+    let pend = [];
+    try { pend = await bmpPendingList(run.code); } catch (_) { pend = []; }
     if (run.merge && run.mods.length > 1) {
-      rbvStage('Menggabung semua modul…');
-      try {
-        const ms = run.mods.map((x) => x.m);
-        const url = await buildRange(run.code, ms[0], ms[ms.length - 1]);
-        await downloadBlobUrl(url, `tuton-${bmpSlug(run.code)}-M${ms[0]}-M${ms[ms.length - 1]}.pdf`);
-        rbvLog(`Gabungan M${ms[0]}–M${ms[ms.length - 1]} terunduh.`);
-      } catch (e) {
-        rbvLog('Gabung gagal: ' + e.message);
-        notify('Gabung gagal: ' + e.message, 'error');
+      let cached = [];
+      try { cached = await dbListModules(run.code); } catch (_) { cached = []; }
+      const ms = run.mods.map((x) => x.m);
+      const bolong = ms.filter((m) => !cached.includes(m));
+      const utuh = ms.every((m) => cached.includes(m));
+      if (!utuh) {
+        rbvLog(`Gabung dilewati — modul belum lengkap: M${bolong.join(', M')}.`);
+      } else {
+        rbvStage('Menggabung semua modul…');
+        try {
+          const url = await buildRange(run.code, ms[0], ms[ms.length - 1]);
+          await downloadBlobUrl(url, `tuton-${bmpSlug(run.code)}-M${ms[0]}-M${ms[ms.length - 1]}.pdf`);
+          rbvLog(`Gabungan M${ms[0]}–M${ms[ms.length - 1]} terunduh.`);
+        } catch (e) {
+          rbvLog('Gabung gagal: ' + e.message);
+          notify('Gabung gagal: ' + e.message, 'error');
+        }
       }
     }
-    rbvPill('done', 'SELESAI');
-    rbvStage(`Selesai — <b>${run.mods.length} modul</b> terunduh${run.merge ? ' + file gabungan' : ''}.`);
+    if (pend.length) {
+      rbvPill('stop', 'ADA BOLONG');
+      rbvStage(`Selesai — <b>${run.mods.length} modul</b> diproses, tapi <b>${pend.length} modul belum lengkap</b> (jaringan): <b>M${pend.map((p) => p.m).join(', M')}</b>. PDF parsialnya sudah terunduh — tekan <b>Lanjutkan yang belum</b> untuk menyusul sisanya; halaman yang sudah ada tidak diulang.`);
+      rbvLog(`Belum lengkap: M${pend.map((p) => p.m).join(', M')}.`);
+      notify(`${pend.length} modul belum lengkap — bisa dilanjutkan kapan saja.`);
+    } else {
+      rbvPill('done', 'SELESAI');
+      rbvStage(`Selesai — <b>${run.mods.length} modul</b> terunduh${run.merge ? ' + file gabungan' : ''}.`);
+      notify('Unduhan BMP selesai.');
+    }
     rbvBar('rbv-bar', 100);
-    notify('Unduhan BMP selesai.');
     bmpRun = null;
     paintRbvMods();
     paintRbvCache();
+    rbvResumeBadge();
     return;
   }
   const md = rbvMod(run.code, mod);
   if (md) { md.state = 'fetch'; paintRbvMods(); }
+  // Halaman yang SUDAH tersimpan (dari sesi/unduhan sebelumnya yang putus)
+  // tidak diunduh & di-OCR ulang: pembaca hanya mengejar halaman yang bolong.
+  let have = [];
+  try { have = await stagedPages(run.code, mod); } catch (_) { have = []; }
+  if (have.length && md) { md.pages = have.length; paintRbvMods(); }
   // Samakan upstream: buka viewer DOKUMEN modul ini dulu — view.php memvalidasi
   // terhadap sesi viewer yang sedang terbuka. Lalu tunggu load + retry handshake.
-  rbvStage(`Modul <b>${mod}</b>: membuka viewer…`);
+  rbvStage(have.length
+    ? `Modul <b>${mod}</b>: melanjutkan — <b>${have.length}</b> halaman sudah tersimpan, hanya yang bolong diunduh ulang…`
+    : `Modul <b>${mod}</b>: membuka viewer…`);
   try {
     await chrome.tabs.update(run.tabId, { url: `${RBV_ROOT}/reader/index.php?subfolder=${encodeURIComponent(run.code)}/&doc=M${mod}.pdf` });
   } catch (e) {
@@ -1623,7 +1755,7 @@ async function rbvRunNextModule() {
     try {
       const r = await chrome.tabs.sendMessage(run.tabId, {
         type: 'TUTON_BMP_START_MODULE', runId: run.runId, code: run.code, module: mod, delayMs: run.speed === 'biasa' ? 2500 : 1200, maxPages: 500,
-        autoScroll: true, speed: run.speed || 'cepat',
+        autoScroll: true, speed: run.speed || 'cepat', have,
       });
       if (r?.ok) { started = true; break; }
       lastErr = r?.error || 'reader belum siap';
@@ -1698,7 +1830,7 @@ async function rbvAutoStart() {
   bmpRun = {
     runId: 'tut' + Date.now().toString(36), code, queue, tabId: tab.id,
     merge: !!rbvEl('rbv-mergeflag')?.checked, autoMode: true, speed,
-    ocrQueue: [], ocrActive: false,
+    ocrQueue: [], ocrActive: false, ocrFailed: new Map(), ocrTries: new Map(),
     mods: queue.map((m) => ({ m, state: 'wait', page: 0, total: 0, pages: 0 })), ocrCtx: '',
   };
   ensureBmpListener();
@@ -1803,6 +1935,8 @@ async function rbvRebuild(code, moduleNo, have, runId, merge) {
 }
 
 // Antrean OCR mode cepat: tangkap gambar terus, OCR di belakang layar.
+// Satu halaman yang gagal OCR tidak mematikan seluruh unduhan: dicoba sekali
+// lagi, lalu dilewati dan dilaporkan sebagai halaman bolong.
 async function rbvOcrPump() {
   const run = bmpRun;
   if (!run || run.ocrActive) return;
@@ -1811,17 +1945,24 @@ async function rbvOcrPump() {
     while (run.ocrQueue?.length && bmpRun && bmpRun.runId === run.runId) {
       const msg = run.ocrQueue.shift();
       const md = rbvMod(run.code, msg.module);
+      const key = `${msg.module}:${msg.page}`;
       try {
         await ocrPage(run.code, msg.module, msg.page, msg.dataUrl, run.runId);
+        run.ocrFailed?.delete(key);
         if (msg.totalPages) rbvBar('rbv-bar', (msg.page / msg.totalPages) * 100);
       } catch (e) {
-        if (md) { md.state = 'error'; paintRbvMods(); }
-        rbvPill('error', 'GAGAL');
-        rbvStage(`OCR M${msg.module} h${msg.page} gagal: ${escapeHtml(e.message)}`);
-        rbvLog(`OCR M${msg.module} h${msg.page} gagal: ${e.message}`);
-        notify(`OCR gagal: ${e.message}`, 'error');
-        await rbvStop(true);
-        return;
+        const tries = (run.ocrTries?.get(key) || 0) + 1;
+        run.ocrTries?.set(key, tries);
+        if (tries < 2) {
+          // Sekali lagi — OCR lokal bisa gagal sesaat (worker sibuk/kehabisan memori).
+          run.ocrQueue.push(msg);
+          rbvStage(`Modul <b>${msg.module}</b>: OCR halaman <b>${msg.page}</b> gagal — dicoba sekali lagi…`);
+          rbvLog(`OCR M${msg.module} h${msg.page} gagal (${e.message}) — coba lagi.`);
+          continue;
+        }
+        run.ocrFailed?.set(key, e.message || String(e));
+        rbvLog(`OCR M${msg.module} h${msg.page} gagal (${e.message}) — dilewati, unduhan lanjut.`);
+        notify(`OCR halaman ${msg.page} gagal — dilewati, bisa disusul nanti.`);
       }
       if (msg.totalPages && md) { md.page = Math.max(md.page || 0, msg.page); md.total = msg.totalPages; paintRbvMods(); }
       rbvStage(`Modul <b>${msg.module}</b>: tangkap gambar jalan, OCR latar: h<b>${msg.page}</b>${run.ocrQueue.length ? ` · antre ${run.ocrQueue.length}` : ''}.`);
@@ -1829,6 +1970,37 @@ async function rbvOcrPump() {
   } finally {
     run.ocrActive = false;
   }
+}
+
+// Halaman yang gagal di-OCR untuk satu modul (dilaporkan sebagai bolong).
+function rbvOcrFailedPages(run, moduleNo) {
+  if (!run?.ocrFailed?.size) return [];
+  const out = [];
+  for (const k of run.ocrFailed.keys()) {
+    const [m, p] = String(k).split(':');
+    if (Number(m) === Number(moduleNo)) out.push(Number(p));
+  }
+  return out.sort((a, b) => a - b);
+}
+
+// Simpan hasil yang sudah ada saat modul berhenti di tengah jalan (jaringan
+// jelek / error): tunggu OCR latar, rakit PDF PARSIAL, unduh, lalu catat
+// halaman bolong supaya bisa dilanjutkan kapan saja tanpa mengulang halaman
+// yang sudah ada. Return daftar halaman yang tersimpan.
+async function rbvKeepPartial(run, moduleNo, total, gaps) {
+  try { if (run.speed !== 'biasa') await rbvWaitOcrDrained(run); } catch (_) {}
+  let have = [];
+  try { have = await stagedPages(run.code, moduleNo); } catch (_) { have = []; }
+  if (have.length) {
+    try {
+      const { blobUrl, bytes, pages } = await assembleStaged(run.code, moduleNo);
+      await downloadBlobUrl(blobUrl, `tuton-${bmpSlug(run.code)}-M${moduleNo}-parsial-${pages}dari${total || '?'}.pdf`);
+      rbvLog(`M${moduleNo}: PDF parsial ${pages}${total ? '/' + total : ''} hal (${(bytes / 1024).toFixed(0)} KB) terunduh.`);
+    } catch (e) { rbvLog(`M${moduleNo}: rakit parsial gagal — ${e.message}`); }
+  }
+  await bmpPendingMark(run.code, moduleNo, total, have, gaps);
+  await rbvResumeBadge();
+  return have;
 }
 
 // Tunggu antrean OCR mode cepat kosong sebelum rakit modul.
@@ -1891,9 +2063,21 @@ async function paintRbvCache() {
   if (!code) { box.innerHTML = ''; return; }
   let mods = [];
   try { mods = await dbListModules(code); } catch { mods = []; }
-  box.innerHTML = mods.length
-    ? `<div class="eyebrow" style="margin-top:10px">${icon('layers', 13)} Cache lokal ${code}</div>` + mods.map((m) => `<div class="pkg-row"><span class="name">Modul ${m}<div class="tiny">searchable PDF · IndexedDB</div></span><span><button class="btn sm ghost" data-sum="${m}">Ringkasan</button> <button class="btn sm ghost" data-quiz="${m}">Soal</button> <button class="btn sm" data-exp="${m}">Export</button></span></div>`).join('') + `<div class="row"><button class="btn sm primary" id="rbv-merge">${icon('download', 13)}Gabung ${mods[0]}–${mods[mods.length - 1]}</button></div><div id="rbv-ai-out"></div>`
+  let pend = [];
+  try { pend = await bmpPendingList(code); } catch { pend = []; }
+  const pendHtml = pend.length
+    ? `<div class="eyebrow" style="margin-top:10px">${icon('refresh', 13)} Belum lengkap — bisa dilanjutkan</div>`
+      + pend.map((p) => `<div class="pkg-row"><span class="name">Modul ${p.m}<div class="tiny">${p.have}${p.total ? '/' + p.total : ''} hal tersimpan${p.missing?.length ? ` · belum: ${p.missing.slice(0, 10).join(', ')}` : ''}${p.at ? ` · ${p.at}` : ''}</div></span><span><button class="btn sm primary" data-res="${p.m}">${icon('refresh', 12)}Lanjutkan</button></span></div>`).join('')
     : '';
+  box.innerHTML = (pendHtml
+    ? pendHtml + `<div class="row"><button class="btn sm primary" id="rbv-lanjut-all">${icon('refresh', 13)}Lanjutkan semua (${pend.length} modul)</button></div>`
+    : '')
+    + (mods.length
+      ? `<div class="eyebrow" style="margin-top:10px">${icon('layers', 13)} Cache lokal ${code}</div>` + mods.map((m) => `<div class="pkg-row"><span class="name">Modul ${m}<div class="tiny">searchable PDF · IndexedDB</div></span><span><button class="btn sm ghost" data-sum="${m}">Ringkasan</button> <button class="btn sm ghost" data-quiz="${m}">Soal</button> <button class="btn sm" data-exp="${m}">Export</button></span></div>`).join('') + `<div class="row"><button class="btn sm primary" id="rbv-merge">${icon('download', 13)}Gabung ${mods[0]}–${mods[mods.length - 1]}</button></div><div id="rbv-ai-out"></div>`
+      : '');
+  box.querySelectorAll('[data-res]').forEach((b) => b.addEventListener('click', () => rbvResumeRun(Number(b.dataset.res))));
+  const all = rbvEl('rbv-lanjut-all');
+  if (all) all.addEventListener('click', () => rbvResumeRun());
   box.querySelectorAll('[data-sum]').forEach((b) => b.addEventListener('click', () => rbvSummarize(code, Number(b.dataset.sum))));
   box.querySelectorAll('[data-quiz]').forEach((b) => b.addEventListener('click', () => rbvGenQuiz(code, Number(b.dataset.quiz))));
   box.querySelectorAll('[data-exp]').forEach((b) => b.addEventListener('click', async () => {
@@ -2075,6 +2259,17 @@ function ensureBmpListener() {
           run.ocrQueue.push(msg);
           rbvOcrPump();
         }
+      } else if (msg.type === 'TUTON_BMP_STALL') {
+        // Halaman macet (jaringan) DILEWATI, bukan mematikan unduhan.
+        const md = rbvMod(run.code, msg.module);
+        if (md) { md.state = 'fetch'; paintRbvMods(); }
+        const tail = msg.networkDead
+          ? ' Jaringan sepertinya putus — sisanya disimpan dulu, lanjutkan kapan saja.'
+          : msg.final ? ' Halaman ini disusulkan nanti lewat <b>Lanjutkan yang belum</b>.'
+          : ' Lanjut halaman berikutnya; halaman ini dicoba lagi di akhir.';
+        rbvStage(`Modul <b>${msg.module}</b>: halaman <b>${msg.page}/${msg.totalPages}</b> belum termuat (jaringan) — <b>dilewati dulu</b>.${tail}`);
+        rbvLog(`M${msg.module} h${msg.page}: dilewati (macet) — ${msg.final || msg.networkDead ? 'disusulkan' : 'coba lagi nanti'}.`);
+        notify(`Halaman ${msg.page} dilewati sementara — unduhan lanjut.`);
       } else if (msg.type === 'TUTON_BMP_RETRY') {
         rbvStage(`Modul <b>${msg.module}</b>: halaman <b>${msg.page}</b> tidak jelas — coba sekali lagi…`);
         rbvLog(`M${msg.module} h${msg.page}: retry sekali.`);
@@ -2103,7 +2298,10 @@ function ensureBmpListener() {
           bmpRun = null;
           return;
         } else if (msg.result === 'complete') {
-          const pages = msg.pages ?? 0;
+          // Mode lanjutan: yang baru diunduh hanya halaman bolong, tapi PDF
+          // final dirakit dari SEMUA halaman tersimpan — jadi patokannya
+          // totalPages, bukan jumlah unduhan sesi ini.
+          const pages = msg.totalPages || (msg.pages ?? 0);
           // Mode cepat: rakit setelah OCR latar selesai, lalu lanjut antrean.
           if (run.speed !== 'biasa') {
             try {
@@ -2118,9 +2316,28 @@ function ensureBmpListener() {
               return;
             }
           }
+          // Ada halaman yang gagal di-OCR? Jangan buang sisanya: simpan parsial,
+          // catat halaman bolongnya, lalu lanjut modul berikutnya.
+          const ocrGagal = rbvOcrFailedPages(run, msg.module);
+          if (ocrGagal.length) {
+            const have = await rbvKeepPartial(run, msg.module, pages, ocrGagal);
+            const mdF = rbvMod(run.code, msg.module);
+            if (mdF) { mdF.state = 'error'; mdF.pages = have.length; paintRbvMods(); }
+            run.queue.shift();
+            rbvPill('stop', 'BOLONG');
+            rbvStage(`Modul <b>${msg.module}</b>: gambar lengkap, tapi OCR gagal di halaman <b>${ocrGagal.slice(0, 10).join(', ')}</b>. <b>${have.length}</b> halaman tetap tersimpan &amp; PDF parsial terunduh — sisanya disusul lewat <b>Lanjutkan yang belum</b>.`);
+            rbvLog(`M${msg.module}: OCR gagal di halaman ${ocrGagal.join(', ')} — parsial disimpan.`);
+            notify(`M${msg.module}: OCR gagal ${ocrGagal.length} halaman — bisa dilanjutkan.`);
+            paintRbvCache();
+            if (run.queue.length) { rbvRunNextModule(); return; }
+            bmpRun = null;
+            return;
+          }
           const ok = await rbvFinishModule(run.code, msg.module, pages, run.runId, !run.merge);
           run.queue.shift();
           if (ok) {
+            await bmpPendingClear(run.code, msg.module);
+            await rbvResumeBadge();
             // Full otomatis: selalu lanjut ke modul berikutnya di antrean.
             if (run.queue.length) {
               rbvPill('run', `M${run.queue[0]}`);
@@ -2153,17 +2370,51 @@ function ensureBmpListener() {
           rbvStage(`Modul <b>${msg.module}</b> gagal dirakit — job berhenti.`);
           await rbvStop(true);
         } else if (msg.result === 'incomplete') {
+          // Modul tidak lengkap karena jaringan. JANGAN buang hasil yang sudah
+          // ada: rakit PDF PARSIAL, catat halaman bolong, lalu lanjut ke modul
+          // berikutnya (sisa bisa disusul kapan saja).
           const md = rbvMod(run.code, msg.module);
-          if (md) { md.state = 'error'; paintRbvMods(); }
-          rbvPill('stop', 'BELUM LENGKAP');
-          rbvStage(`Modul <b>${msg.module}</b>: ${escapeHtml(msg.reason || 'belum semua halaman tertangkap.')}`);
+          const total = msg.totalPages || md?.total || 0;
+          const gaps = Array.isArray(msg.missing) ? msg.missing : [];
+          const have = await rbvKeepPartial(run, msg.module, total, gaps);
+          if (md) { md.state = 'error'; md.pages = have.length; md.total = total || md.total; paintRbvMods(); }
+          run.queue.shift();
+          rbvPill('stop', 'BOLONG');
+          rbvStage(`Modul <b>${msg.module}</b>: <b>${have.length}${total ? '/' + total : ''}</b> halaman tersimpan`
+            + (gaps.length ? ` — belum: <b>${gaps.slice(0, 12).join(', ')}</b>` : '')
+            + `. PDF parsial sudah diunduh; sisanya disusul lewat <b>Lanjutkan yang belum</b> (halaman yang sudah ada tidak diulang).`);
           rbvLog(`M${msg.module}: belum lengkap — ${msg.reason || ''}`);
-          notify(`M${msg.module}: belum semua halaman tampil.`, 'error');
+          notify(`M${msg.module}: ${have.length}${total ? '/' + total : ''} hal — bisa dilanjutkan nanti.`);
+          paintRbvCache();
+          if (run.queue.length) {
+            rbvLog(`M${msg.module}: parsial; lanjut otomatis M${run.queue[0]}.`);
+            rbvRunNextModule();
+            return;
+          }
           bmpRun = null;
+          paintRbvMods();
+          paintRbvCache();
         } else {
           const label = { blocked: 'Diblokir server (403/429/Rejected)', login_required: 'Sesi butuh login ulang', missing_module: 'Modul tidak ditemukan', error: 'Error' }[msg.result] || msg.result;
           const md = rbvMod(run.code, msg.module);
           if (md) { md.state = 'error'; paintRbvMods(); }
+          // Error teknis (mis. halaman bolong di mode Biasa): yang sudah
+          // tersimpan tetap diselamatkan, lalu lanjut modul berikutnya.
+          // Blokir server / sesi mati tetap menghentikan seluruh job.
+          if (msg.result === 'error') {
+            const have = await rbvKeepPartial(run, msg.module, msg.totalPages || md?.total || 0, msg.missing || []);
+            run.queue.shift();
+            rbvPill('stop', 'BOLONG');
+            rbvStage(`Modul <b>${msg.module}</b>: ${escapeHtml(label)}${msg.reason ? ' — ' + escapeHtml(msg.reason) : ''}. <b>${have.length}</b> halaman tersimpan &amp; terunduh sebagai PDF parsial.`);
+            rbvLog(`M${msg.module}: ${label}${msg.reason ? ' — ' + msg.reason : ''}`);
+            notify(`M${msg.module}: ${have.length} hal tersimpan — bisa dilanjutkan.`);
+            if (md) { md.pages = have.length; paintRbvMods(); }
+            paintRbvCache();
+            if (run.queue.length) { rbvRunNextModule(); return; }
+            bmpRun = null;
+            paintRbvCache();
+            return;
+          }
           rbvPill('error', 'BERHENTI');
           rbvStage(`Modul <b>${msg.module}</b>: ${escapeHtml(label)}${msg.reason ? ' — ' + escapeHtml(msg.reason) : ''}`);
           rbvLog(`M${msg.module}: ${label}${msg.reason ? ' — ' + msg.reason : ''}`);
@@ -2194,9 +2445,11 @@ function vBmp() {
       <label class="checkline"><input type="checkbox" id="rbv-mergeflag"><span>Gabung jadi 1 PDF di akhir (tanpa centang = file per modul, otomatis tersimpan tiap modul selesai)</span></label>
       <div class="tiny" style="margin-top:10px;line-height:1.5">
         <b>Cepat (default):</b> extension otomatis memuat tiap halaman lalu mengunduh semua modul dalam rentang. <b>Biasa:</b> ritme lama satu halaman per satu waktu.
+        Kalau jaringan jelek dan ada halaman yang macet, halaman itu <b>dilewati dulu</b> (unduhan tidak gagal total) — sisanya tetap masuk, dan yang bolong disusul lewat <b>Lanjutkan yang belum</b> tanpa mengulang halaman yang sudah ada.
       </div>
       <div class="row" style="margin-top:8px">
         <button class="btn primary" id="rbv-auto" style="flex:1">${icon('download', 14)}Unduh otomatis</button>
+        <button class="btn" id="rbv-lanjut" style="flex:1">${icon('refresh', 14)}Lanjutkan yang belum</button>
       </div>
       <div class="row" style="margin-top:6px">
         <button class="btn primary" id="rbv-rekam" style="flex:1">${icon('play', 14)}Mulai rekam</button>
@@ -2251,6 +2504,7 @@ function vBmp() {
   $('#rbv-done').addEventListener('click', rbvDone);
   $('#rbv-panen').addEventListener('click', rbvHarvestCurrent);
   $('#rbv-auto').addEventListener('click', rbvAutoStart);
+  $('#rbv-lanjut').addEventListener('click', () => rbvResumeRun());
   $('#rbv-nextmod').addEventListener('click', async () => {
     const code = (rbvEl('rbv-code').value || '').trim().toUpperCase();
     if (!code) { notify('Isi kode BMP dulu.', 'error'); return; }
@@ -2273,8 +2527,9 @@ function vBmp() {
     }
   });
   $('#rbv-stop').addEventListener('click', () => rbvStop(false));
-  $('#rbv-code').addEventListener('change', paintRbvCache);
+  $('#rbv-code').addEventListener('change', () => { paintRbvCache(); rbvResumeBadge(); });
   paintRbvCache();
+  rbvResumeBadge();
 
   $('#bmp-shot').addEventListener('click', async () => {
     try {
