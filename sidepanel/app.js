@@ -2435,10 +2435,10 @@ function ensureBmpListener() {
             bmpRun = null;
             rbvPill('stop', msg.result === 'login_required' ? 'LOGIN ULANG' : 'DIBLOKIR');
             rbvStage(`Modul <b>${msg.module}</b>: <b>${escapeHtml(label)}</b>${msg.reason ? ' — ' + escapeHtml(msg.reason) : ''}.`
-              + ` <b>${have.length}</b> halaman sudah tersimpan (PDF parsial terunduh).`
-              + ` Buka tab reader, <b>login lagi</b>, lalu klik <b>Lanjutkan yang belum</b> — halaman yang sudah ada tidak diulang.`);
-            rbvLog(`M${msg.module}: ${label} — ${have.length} hal tersimpan, menunggu login.`);
-            notify(msg.result === 'login_required' ? 'Sesi habis — login lagi lalu klik Lanjutkan yang belum.' : 'Server menolak — tunggu sebentar, lalu klik Lanjutkan yang belum.', 'error');
+              + ` <b>${have.length}</b> halaman sudah tersimpan.`
+              + (msg.result === 'blocked' ? ` Cookie pelacak F5 telah dibersihkan otomatis — klik <b>Lanjutkan yang belum</b> untuk lanjut langsung.` : ` Buka tab reader, <b>login lagi</b>, lalu klik <b>Lanjutkan yang belum</b> — halaman yang sudah ada tidak diulang.`));
+            rbvLog(`M${msg.module}: ${label} — ${have.length} hal tersimpan.`);
+            notify(msg.result === 'login_required' ? 'Sesi habis — login lagi lalu klik Lanjutkan yang belum.' : 'Cookie firewall di-reset — klik Lanjutkan yang belum.', msg.result === 'blocked' ? 'warning' : 'error');
             paintRbvCache();
             return;
           }

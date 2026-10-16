@@ -241,6 +241,19 @@ chrome.runtime.onMessage.addListener((msg, sender, send) => {
         });
         return true; // async via callback
       } catch (e) { send({ ok: false, error: String(e?.message || e) }); }
+    } else if (msg.type === 'TUTON_CLEAR_F5_COOKIES') {
+      try {
+        const url = 'https://pustaka.ut.ac.id';
+        const list = await chrome.cookies.getAll({ domain: 'pustaka.ut.ac.id' });
+        let removed = 0;
+        for (const c of list) {
+          if (c.name.startsWith('TS') || c.name.startsWith('TSPD')) {
+            await chrome.cookies.remove({ url: (c.secure ? 'https://' : 'http://') + c.domain.replace(/^\./, '') + c.path, name: c.name });
+            removed++;
+          }
+        }
+        send({ ok: true, removed });
+      } catch (e) { send({ ok: false, error: String(e?.message || e) }); }
     } else {
       send({ ok: false, error: 'unknown' });
     }

@@ -87,6 +87,11 @@
       if (current === 1) score += 5;
       addCandidate(total, score, 'visible-page-counter');
     }
+    // Fallback: hitung div pageContainer bila script numPages tidak ada di DOM
+    const containers = document.querySelectorAll('[id*="pageContainer_"]');
+    if (containers.length > 0) {
+      addCandidate(containers.length, 95, 'page-containers-fallback');
+    }
     candidates.sort((a, b) => b.score - a.score);
     return candidates[0] || null;
   }
@@ -116,6 +121,12 @@
   function pageRejected() {
     const t = bodyText();
     return t.includes('request rejected') || t.includes('403 akses ditolak') || t.includes('support id');
+  }
+
+  async function resetF5Cookies() {
+    try {
+      await chrome.runtime.sendMessage({ type: 'TUTON_CLEAR_F5_COOKIES' });
+    } catch (_) {}
   }
 
   // MODE PASIF — IKUT SCROLL USER (pengganti request/scroll otomatis):
@@ -297,7 +308,10 @@
     let lastCount = loadedModuleImages(moduleNo).filter((x) => !harvestedPages.has(x.page)).length;
     for (;;) {
       if (stillActive && !stillActive()) return { kind: 'error', reason: 'Dibatalkan' };
-      if (pageRejected()) return { kind: 'blocked', reason: 'Halaman viewer Request Rejected — berhenti, tanpa retry.' };
+      if (pageRejected()) {
+        await resetF5Cookies();
+        return { kind: 'blocked', reason: 'Halaman viewer Request Rejected — cookie pelacak F5 telah di-reset.' };
+      }
       if (passwordVisible()) return { kind: 'login_required', reason: 'Sesi butuh login ulang.' };
       const loaded = loadedModuleImages(moduleNo);
       const fresh = loaded.filter((x) => !harvestedPages.has(x.page));
@@ -379,7 +393,8 @@
     const stillActive = () => Boolean(runId) && activeRunId === runId;
     if (!stillActive()) return;
 
-    const finish = (result, extra) => {
+    const finish = async (result, extra) => {
+      if (result === 'blocked') await resetF5Cookies();
       const total = extra?.totalPages ?? null;
       const missing = [];
       if (total) for (let p = 1; p <= total; p++) if (!harvestedPages.has(p)) missing.push(p);
@@ -527,7 +542,8 @@
     const stillActive = () => Boolean(runId) && activeRunId === runId;
     if (!stillActive()) return;
     if (pageRejected()) {
-      post({ type: 'TUTON_BMP_MODULE_DONE', runId, module, result: 'blocked', page: 0, reason: 'Halaman viewer Request Rejected — berhenti, tanpa retry.' });
+      await resetF5Cookies();
+      post({ type: 'TUTON_BMP_MODULE_DONE', runId, module, result: 'blocked', page: 0, reason: 'Halaman viewer Request Rejected — cookie pelacak F5 telah di-reset otomatis.' });
       return;
     }
     if (passwordVisible()) {
@@ -561,7 +577,8 @@
       for (let p = 1; p <= totalPages; p++) if (!harvestedPages.has(p)) out.push(p);
       return out;
     };
-    const finish = (result, extra) => {
+    const finish = async (result, extra) => {
+      if (result === 'blocked') await resetF5Cookies();
       const missing = missingFrom();
       post({ type: 'TUTON_BMP_MODULE_DONE', runId, module, result,
         page: extra?.page || 0, pages: harvestedPages.size, totalPages,
@@ -710,11 +727,12 @@
   }
 
   async function runModule(cfg) {
-    const { runId, code, module, delayMs, maxPages } = cfg;
+    const { runId, code, module, maxPages, delayMs, have } = cfg;
     const stillActive = () => Boolean(runId) && activeRunId === runId;
     if (!stillActive()) return;
     if (pageRejected()) {
-      post({ type: 'TUTON_BMP_MODULE_DONE', runId, module, result: 'blocked', page: 0, reason: 'Halaman viewer Request Rejected — berhenti, tanpa retry.' });
+      await resetF5Cookies();
+      post({ type: 'TUTON_BMP_MODULE_DONE', runId, module, result: 'blocked', page: 0, reason: 'Halaman viewer Request Rejected — cookie pelacak F5 telah di-reset otomatis.' });
       return;
     }
     if (passwordVisible()) {
